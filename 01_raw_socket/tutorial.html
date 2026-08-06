@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Module 1 — Raw TCP Socket Connection | Build a Browser From Scratch</title>
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body style="--accent:#38bdf8; --accent-soft:rgba(56,189,248,0.12);">
+
+<div class="course-header">
+  <span class="module-badge">MODULE 1</span>
+  <span class="track-tag">Track 1 · Phase 1: Bare Metal Foundation</span>
+  <h1>Raw TCP <span class="accent">Socket Connection</span></h1>
+  <p class="subtitle">Before a browser can parse a single tag, it has to get bytes off the internet with its own two hands.</p>
+</div>
+
+<span class="decisions-badge">📄 Companion doc: <a href="DECISIONS.md">DECISIONS.md</a> · Source: <a href="raw_socket.py">raw_socket.py</a></span>
+
+<h2 data-num="00">Prerequisites</h2>
+<div class="prereq-links">
+  <a class="prereq-tag" href="../prereqs/bytes_and_encoding.html">Bytes &amp; Text Encoding</a>
+  <a class="prereq-tag" href="../prereqs/client_server_model.html">The Client–Server Model</a>
+</div>
+
+<h2 data-num="01">The Big Analogy</h2>
+<div class="callout callout-analogy">
+<div class="callout-label">🍽️ The Restaurant, continued</div>
+<p>This module is the runner's entire job, and nothing else. The runner
+doesn't know how to cook, doesn't know the menu, doesn't even know what a
+"dish" is — their whole skill is: walk to the correct warehouse address,
+knock, hand over a slip of paper, wait, and carry back whatever crate
+comes out, sealed, unopened. Whether the crate contains a full HTML page
+or a JSON error, the runner's job is identical: open the door, exchange
+something, close the door.</p>
+<p>That's exactly what `raw_socket.py` does — it doesn't know what HTTP
+is (that's Module 3), it just proves the door can be opened and something
+real can be carried through it.</p>
+</div>
+
+<h2 data-num="02">What Happens, Step by Step</h2>
+<ol class="step-list">
+<li><code>socket.socket(AF_INET, SOCK_STREAM)</code> creates an unconnected socket object — a promise of a connection, not a connection yet.</li>
+<li><code>sock.connect((host, port))</code> triggers DNS resolution (host → IP, done by the OS) and then the TCP three-way handshake (SYN / SYN-ACK / ACK, also done by the OS) — after this line returns, a real, live, ordered byte pipe exists between your machine and the server.</li>
+<li><code>send_all()</code> pushes our hand-built request bytes down that pipe, looping if the OS can't send everything in one call.</li>
+<li><code>recv_all()</code> reads back whatever the server sends, in a loop, until the server closes its end (signaled by <code>recv()</code> returning empty bytes).</li>
+<li><code>sock.close()</code> releases the connection. The raw bytes we received are now just a Python <code>bytes</code> object — no different from any other data in memory.</li>
+</ol>
+
+<h2 data-num="03">A Map of the Connection</h2>
+<div class="diagram-box">
+<div class="kv-diagram">
+  YOUR MACHINE                                    example.com
+  (client)                                        (server, port 80)
+
+  socket.socket() ---- unconnected ----
+
+  .connect(("example.com", 80))
+        |
+        |-- DNS: "example.com" -> 23.x.x.x  (OS resolver, not us)
+        |
+        |== TCP handshake: SYN -> <- SYN-ACK -> ACK ==   (OS kernel, not us)
+        |
+        v
+  local 10.2.0.2:57937  <=====  TCP byte stream  =====>  23.x.x.x:80
+        |
+        |-- send_all(b"GET / HTTP/1.0\r\n...")  -->
+        |
+        |  <--  recv_all() collects bytes until peer closes  --
+        |
+  sock.close()                                     (server closes its end)
+</div>
+<p class="diagram-caption">everything above the byte-stream line is the OS's job; everything we wrote is the two send/recv loops</p>
+</div>
+
+<h2 data-num="04">The Code, Explained</h2>
+
+<p>The connection itself is three lines — the two socket "constants" are
+where the real decisions live:</p>
+<div class="filename">raw_socket.py</div>
+<pre><code class="language-python">sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+sock.settimeout(timeout)
+sock.connect((host, port))</code></pre>
+<p><code>AF_INET</code> and <code>SOCK_STREAM</code> aren't arbitrary
+names — they're the two facts a socket needs before it can exist:
+<em>what kind of address</em> (IPv4) and <em>what kind of transport</em>
+(TCP, a reliable ordered stream — required because HTTP is specified to
+assume one). See DECISIONS.md for why each is categorized as an external
+contract, not a free choice.</p>
+
+<p>The receiving loop is the part most tutorials skip past — and the part
+most worth sitting with:</p>
+<div class="filename">raw_socket.py</div>
+<pre><code class="language-python">def recv_all(sock, chunk_size=4096):
+    chunks = []
+    while True:
+        chunk = sock.recv(chunk_size)
+        if not chunk:          # empty bytes = the peer closed the connection
+            break
+        chunks.append(chunk)
+    return b"".join(chunks)</code></pre>
+<p><code>recv(4096)</code> asks for up to 4096 bytes but is free to hand
+back fewer — a slow network might deliver 200 bytes at a time. The loop
+keeps calling <code>recv()</code> until it gets back <code>b""</code>,
+which the socket API reserves specifically to mean "the other side hung
+up," never "nothing to read yet." That distinction is the entire reason
+this is a loop and not a single call.</p>
+
+<h2 data-num="05">Limits / What You Cannot Do Yet</h2>
+<div class="compare-grid">
+  <div class="compare-col cant">
+    <h4>Can't do yet</h4>
+    <ul>
+      <li>Talk to any HTTPS site (Module 4)</li>
+      <li>Send a spec-correct HTTP/1.1 request (Module 3)</li>
+      <li>Know when a response body actually ends without relying on <code>Connection: close</code></li>
+      <li>Turn a typed URL into a host/port automatically (Module 2)</li>
+    </ul>
+  </div>
+  <div class="compare-col can">
+    <h4>Can do now</h4>
+    <ul>
+      <li>Open a real TCP connection to any host:port with zero libraries beyond <code>socket</code></li>
+      <li>Send arbitrary bytes and reliably receive everything sent back</li>
+      <li>Correctly detect "the server closed the connection" vs. "nothing to read yet"</li>
+    </ul>
+  </div>
+</div>
+
+<h2 data-num="06">Run It</h2>
+<pre><code class="language-bash">cd 01_raw_socket
+python raw_socket.py</code></pre>
+<p>Exact output from a real run against <code>example.com</code>, unedited:</p>
+<pre><code>[1] Connected. Local endpoint: 10.2.0.2:57937 -> Remote endpoint: example.com:80
+[2] Sending 56 bytes...
+[3] Waiting for the server to respond and close the connection...
+[4] Connection closed. Received 828 raw bytes total.
+
+============================================================
+First 120 raw bytes (this is genuinely just numbers —
+see prereqs/bytes_and_encoding.html):
+============================================================
+b'HTTP/1.1 200 OK\r\nDate: Thu, 06 Aug 2026 06:27:38 GMT\r\nContent-Type: text/html\r\nConnection: close\r\nServer: cloudflare\r\nLa'
+
+============================================================
+The same bytes, decoded as text (first 300 characters):
+============================================================
+HTTP/1.1 200 OK
+Date: Thu, 06 Aug 2026 06:27:38 GMT
+Content-Type: text/html
+Connection: close
+Server: cloudflare
+Last-Modified: Sat, 01 Aug 2026 09:39:03 GMT
+Allow: GET, HEAD
+Accept-Ranges: bytes
+Age: 7235
+cf-cache-status: HIT
+CF-RAY: a26bfa18295c32fa-OSL
+
+&lt;!doctype html&gt;&lt;html lang="en"&gt;</code></pre>
+<p>Your byte counts, date, and CF-RAY value will differ — that's expected,
+you hit a live server. What should not differ: a status line starting
+<code>HTTP/1.1 200 OK</code> and a body starting <code>&lt;!doctype html&gt;</code>.</p>
+
+<div class="callout callout-trouble">
+<div class="callout-label">⚠ Getting a blank or broken result?</div>
+<ul>
+<li><strong>Hangs, then times out after 5s:</strong> something between you and port 80 is blocking outbound traffic (corporate firewall, restricted sandbox). Try a different network.</li>
+<li><strong><code>ConnectionRefusedError</code>:</strong> nothing is listening on that host:port — double check you didn't typo the port.</li>
+<li><strong>Garbled characters in the console (e.g. a stray <code>�</code>) but the program still finishes:</strong> that's your terminal's own encoding (commonly cp1252 on Windows) failing to display a Unicode character in this tutorial's own text, not a bug in the socket code — the actual received bytes are unaffected.</li>
+<li><strong><code>socket.gaierror</code>:</strong> DNS resolution failed — the hostname itself couldn't be looked up. Confirm you can reach the internet at all.</li>
+</ul>
+</div>
+
+<h2 data-num="07">Brain Exercise</h2>
+<div class="callout callout-brain">
+<div class="callout-label">🧠 Think before you reveal</div>
+<p><strong>The demo works because the request includes
+<code>Connection: close</code>, which makes the server hang up after one
+response. What would happen — concretely, in terms of what line of code
+gets stuck — if you removed that header and the server honored HTTP/1.1's
+default of keeping the connection open?</strong></p>
+<details>
+<summary>Reveal the answer</summary>
+<p><code>recv_all()</code>'s <code>while True</code> loop would never see
+<code>recv()</code> return <code>b""</code>, because the server never
+closes its end — it's sitting there, connection open, waiting to see if
+you'll send another request on the same socket. The loop would keep
+calling <code>recv()</code>, which would block waiting for more data that
+isn't coming, until <code>sock.settimeout(5.0)</code> finally fires a
+<code>socket.timeout</code> exception. This is exactly why a real HTTP
+client can't rely on "read until closed" — it has to read the
+<code>Content-Length</code> header (or handle chunked encoding) and stop
+reading at the byte count the server told it to expect. Module 3 builds
+exactly that.</p>
+</details>
+</div>
+
+<h2 data-num="08">There Are No Dumb Questions</h2>
+
+<div class="qa-item">
+<div class="qa-q">Why didn't we just use Python's <code>requests</code> library — isn't that what everyone actually uses?</div>
+<div class="qa-a">In real code, absolutely — <code>requests</code> is well-tested and handles dozens of edge cases this course skips. But the entire point of this course is to see what <code>requests</code> is doing on your behalf. Every socket call in this module is a line of code that exists, unseen, somewhere inside every HTTP library you've ever used.</div>
+</div>
+
+<div class="qa-item">
+<div class="qa-q">Is the local port number (57937 in the sample output) something the server cares about?</div>
+<div class="qa-a">No — it's an "ephemeral port," assigned by your OS from a pool of temporary ports specifically so the server has a return address to send responses to. You didn't choose it, and a different run will get a different one. The server only cares about the port it's listening on (80, in this case).</div>
+</div>
+
+<div class="qa-item">
+<div class="qa-q">Could <code>recv_all()</code> ever return the wrong bytes, out of order?</div>
+<div class="qa-a">No — this is precisely the guarantee TCP (<code>SOCK_STREAM</code>) provides: bytes arrive in the exact order they were sent, with none missing or duplicated, or the connection errors out entirely. That guarantee is why HTTP is layered on TCP and not UDP. See <a href="../prereqs/client_server_model.html">the client-server prereq</a>.</div>
+</div>
+
+<div class="qa-item">
+<div class="qa-q">What actually happens during "the TCP handshake" mentioned in the diagram?</div>
+<div class="qa-a">Three packets, invisible to our code: your machine sends a SYN ("I'd like to connect"), the server replies SYN-ACK ("acknowledged, I'd like to connect too"), your machine replies ACK ("acknowledged"). Only after all three does <code>sock.connect()</code> return. This is entirely handled by the OS kernel's TCP implementation — it's the canonical example of what this course treats as "hardware."</div>
+</div>
+
+<h2 data-num="09">What's Next</h2>
+<p>This module hardcoded a host and port. The next module builds the
+piece that gets those two values (plus a path) out of a typed URL string
+like <code>https://example.com/index.html</code> — with no
+<code>urllib.parse</code> import, by hand, character by character.</p>
+
+<div class="module-nav">
+  <a href="../00_big_picture/tutorial.html"><span class="dir">← Previous</span>Module 0: The Big Picture</a>
+  <a class="next" href="../02_url_parser/tutorial.html"><span class="dir">Next →</span>Module 2: URL Parser</a>
+</div>
+
+</body>
+</html>
