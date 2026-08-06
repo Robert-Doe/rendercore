@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Module 26 — URL Encoding &amp; Decoding | Build a Browser From Scratch</title>
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body style="--accent:#f43f5e; --accent-soft:rgba(244,63,94,0.12);">
+
+<div class="course-header">
+  <span class="module-badge">MODULE 26</span>
+  <span class="track-tag">Track 2 · Phase 5: XSS Defense — Encoders &amp; Sanitizers</span>
+  <h1>URL Encoding <span class="accent">&amp; Decoding</span></h1>
+  <p class="subtitle">Before any HTML is involved, a URL can already be tricked into carrying structure its author never intended — if a value crossing into it isn't encoded first.</p>
+</div>
+
+<span class="decisions-badge">📄 Companion doc: <a href="DECISIONS.md">DECISIONS.md</a> · Source: <a href="url_encoding.py">url_encoding.py</a></span>
+
+<h2 data-num="00">Prerequisites</h2>
+<div class="prereq-links">
+  <a class="prereq-tag" href="../02_url_parser/tutorial.html">Module 2: URL Parser</a>
+  <a class="prereq-tag" href="../prereqs/bytes_and_encoding.html">Bytes &amp; Text Encoding</a>
+</div>
+
+<h2 data-num="01">The Big Analogy</h2>
+<div class="callout callout-analogy">
+<div class="callout-label">🍽️ The Restaurant, continued</div>
+<p>An order form has structured fields separated by commas: "table,
+dish, special-instructions." If a guest's special instructions happen to
+literally contain the word "table" followed by a comma and a fake dish
+name, and the kitchen just pastes that text into the form without any
+escaping, the form now LOOKS like it has extra, legitimate-seeming
+fields it never actually had. Percent-encoding is the restaurant putting
+quotes around free-text fields and escaping any comma found inside them
+— so "table, extra-free-dessert" stays one instruction, not two fields
+pretending to be part of the form's real structure.</p>
+</div>
+
+<h2 data-num="02">What Happens, Step by Step</h2>
+<ol class="step-list">
+<li>Take a value that's about to be inserted into a URL (a query parameter's value, a path segment).</li>
+<li>Convert it to its raw UTF-8 bytes — encoding has to work on bytes, not characters, to handle non-ASCII text correctly.</li>
+<li>For every byte that ISN'T one of URL's safe "unreserved" characters (letters, digits, <code>- . _ ~</code>), replace it with <code>%</code> plus its two-digit hex value.</li>
+<li>Splice the now-encoded value into the URL. Any character that used to mean "start a new parameter" or "end the path" is now just <code>%XX</code> text — inert, structurally meaningless.</li>
+<li>On the way back out, reverse the process: collect raw bytes (decoding each <code>%XX</code>, passing other characters through as their own UTF-8 bytes), then decode the whole byte sequence as UTF-8 once, at the end.</li>
+</ol>
+
+<h2 data-num="03">A Map of the Attack and the Fix</h2>
+<div class="diagram-box">
+<div class="kv-diagram">
+  user input:  cats&admin=true
+
+  WITHOUT encoding:
+    URL:    https://site.example/search?q=cats&admin=true
+    Module 2 parses query as:  "q=cats&admin=true"
+                                        ^^^^^^^^^^
+                                        looks like a REAL second parameter!
+
+  WITH encode_uri_component() first:
+    URL:    https://site.example/search?q=cats%26admin%3Dtrue
+    Module 2 parses query as:  "q=cats%26admin%3Dtrue"
+                                   \_______________/
+                                   ONE value, '&' and '=' are now inert text
+
+    percent_decode("cats%26admin%3Dtrue") -> "cats&admin=true"   (unchanged, whole)
+</div>
+<p class="diagram-caption">encoding doesn't hide or destroy the attacker's text — it strips its ability to be reinterpreted as syntax</p>
+</div>
+
+<h2 data-num="04">The Code, Explained</h2>
+
+<p>The whole encoder is a per-byte decision, one line:</p>
+<div class="filename">url_encoding.py</div>
+<pre><code class="language-python">for byte in s.encode("utf-8"):
+    ch = chr(byte)
+    if ch in UNRESERVED or ch in safe:
+        out.append(ch)
+    else:
+        out.append(f"%{byte:02X}")</code></pre>
+<p>Note it iterates <code>s.encode("utf-8")</code> — bytes — not <code>s</code>
+itself. That's what keeps non-ASCII text correct: a character like
+<code>é</code> is two bytes, and each byte gets its own independent
+encoding decision.</p>
+
+<p>The security-relevant check reuses Module 2 directly, rather than
+just asserting the fix works:</p>
+<div class="filename">url_encoding.py</div>
+<pre><code class="language-python">parsed_unsafe = parse_url(unsafe_url)   # Module 2, unmodified
+print(f"'admin=true' in parsed_unsafe.query.split('&')")  # True — the exploit is REAL</code></pre>
+
+<h2 data-num="05">Limits / What You Cannot Do Yet</h2>
+<div class="compare-grid">
+  <div class="compare-col cant">
+    <h4>Can't do yet</h4>
+    <ul>
+      <li>Prevent injection into HTML body content — that's a completely different context with different rules (Module 27)</li>
+      <li>Match real JavaScript's `encodeURIComponent` byte-for-byte — this module's version is slightly more conservative (see DECISIONS.md)</li>
+    </ul>
+  </div>
+  <div class="compare-col can">
+    <h4>Can do now</h4>
+    <ul>
+      <li>Correctly, losslessly round-trip encode/decode any text, including non-ASCII</li>
+      <li>Prevent a real, reproduced query-string injection attack</li>
+      <li>Correctly choose between "encode one value" and "encode a whole URI" — using the right safe-character set for each</li>
+    </ul>
+  </div>
+</div>
+
+<h2 data-num="06">Run It</h2>
+<pre><code class="language-bash">cd 26_url_encoding
+python url_encoding.py</code></pre>
+<p>Exact output from a real run, unedited:</p>
+<pre><code>CASE 2 — the actual vulnerability: query-string injection
+  --- WITHOUT encoding (vulnerable) ---
+  constructed URL: https://site.example/search?q=cats&admin=true
+  Module 2 parses its query as: 'q=cats&admin=true'
+  the attacker's 'admin=true' is now a SEPARATE, real-looking parameter, not part of the search text: True
+
+  --- WITH encode_uri_component (safe) ---
+  constructed URL: https://site.example/search?q=cats%26admin%3Dtrue
+  Module 2 parses its query as: 'q=cats%26admin%3Dtrue'
+  decoding the single 'q' value recovers the ORIGINAL string whole, as ONE value: 'cats&admin=true'
+  no second 'admin' parameter exists anywhere in the query: True
+
+======================================================================
+Checks
+======================================================================
+round-trip encode/decode is lossless for non-ASCII input: True
+UNENCODED input successfully injects a second query parameter (the real vulnerability, reproduced): True
+ENCODED input does NOT inject a second parameter — query has exactly one '=' at the top level: True
+the encoded value, once decoded back out, exactly equals the original malicious-looking string: True</code></pre>
+
+<div class="callout callout-trouble">
+<div class="callout-label">⚠ Getting a blank or broken result?</div>
+<ul>
+<li><strong>Non-ASCII round-trip produces garbled text:</strong> check encoding/decoding operate on `.encode("utf-8")` bytes throughout, never on individual Python string characters directly.</li>
+<li><strong>The "vulnerable" case doesn't actually show injection:</strong> confirm you're inspecting `parsed_unsafe.query` (Module 2's own parsed result), not just the raw f-string — the point is proving the PARSER gets confused, not just that the text looks suspicious.</li>
+</ul>
+</div>
+
+<h2 data-num="07">Brain Exercise</h2>
+<div class="callout callout-brain">
+<div class="callout-label">🧠 Think before you reveal</div>
+<p><strong>If a developer used `encode_uri` (not `encode_uri_component`) on the user's search text in Case 2 — the function meant for whole URIs, not single values — would the injection still be prevented?</strong></p>
+<details>
+<summary>Reveal the answer</summary>
+<p>No — and this is exactly why using the WRONG one of these two
+functions is a real, common vulnerability pattern, not just a stylistic
+mismatch. `encode_uri`'s safe set explicitly includes `&` and `=`
+(because those characters are supposed to survive intact when you're
+encoding an already-complete URI). Running the user's `"cats&admin=true"`
+through `encode_uri` would leave the `&` and `=` completely untouched,
+producing the exact same vulnerable URL as not encoding at all. The
+safety here doesn't come from "encoding was applied" in the abstract —
+it comes from applying the RIGHT encoding function for what's actually
+being encoded: a single untrusted VALUE, not a trusted, pre-structured
+URI.</p>
+</details>
+</div>
+
+<h2 data-num="08">There Are No Dumb Questions</h2>
+
+<div class="qa-item">
+<div class="qa-q">Is this the same kind of bug as XSS?</div>
+<div class="qa-a">It's the same FAMILY of bug — untrusted data crossing into a context where certain characters mean something structural, without being neutralized first — but this specific case (query-string injection) doesn't run any script; it just smuggles extra parameters. The pattern generalizes directly to Module 27, where the "structural characters" are `<` and `>`, and the consequence becomes actual code execution.</div>
+</div>
+
+<div class="qa-item">
+<div class="qa-q">Why does `encode_uri_component` encode MORE than real JavaScript's version?</div>
+<div class="qa-a">A deliberate, named choice (DECISIONS.md) — real `encodeURIComponent` leaves a handful of characters (`! * ' ( )`) unescaped for historical reasons tied to an older URI spec. This module sticks strictly to RFC 3986's actual unreserved set, which means it over-encodes those few characters relative to real JS — strictly safer, never less safe, and simpler to reason about without needing to memorize a historical exception list.</div>
+</div>
+
+<div class="qa-item">
+<div class="qa-q">Could you encode the ENTIRE URL, including the `https://`, the host, and the `?`, all with `encode_uri_component`?</div>
+<div class="qa-a">You could run the function on that whole string, but the result would no longer be a valid URL at all — `encode_uri_component` would escape the `:`, `/`, and `?` characters that GIVE the URL its structure, turning `https://site.example/search?q=x` into meaningless percent-encoded text. This is exactly the mistake `encode_uri` exists to avoid — always match the function to whether you're encoding a whole structured URI or one untrusted piece going into it.</div>
+</div>
+
+<h2 data-num="09">What's Next</h2>
+<p>The same core idea — encode untrusted data before it crosses into a
+context with its own syntax — moves next to the context where the
+stakes get much higher: HTML body content, where the "structural
+characters" are the ones that turn plain text into a running
+<code>&lt;script&gt;</code> tag.</p>
+
+<div class="module-nav">
+  <a href="../25_sandboxing/tutorial.html"><span class="dir">← Previous</span>Module 25: Sandboxing Deep Dive</a>
+  <a class="next" href="../27_entity_encoding/tutorial.html"><span class="dir">Next →</span>Module 27: HTML Entity Encoding</a>
+</div>
+
+</body>
+</html>
