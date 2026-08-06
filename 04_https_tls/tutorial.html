@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Module 4 — TLS via Socket Wrapping | Build a Browser From Scratch</title>
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body style="--accent:#22d3ee; --accent-soft:rgba(34,211,238,0.12);">
+
+<div class="course-header">
+  <span class="module-badge">MODULE 4</span>
+  <span class="track-tag">Track 1 · Phase 1: Bare Metal Foundation</span>
+  <h1>TLS via <span class="accent">Socket Wrapping</span></h1>
+  <p class="subtitle">HTTPS isn't a different protocol from HTTP. It's the exact same protocol, run over a sealed envelope instead of an open one.</p>
+</div>
+
+<span class="decisions-badge">📄 Companion doc: <a href="DECISIONS.md">DECISIONS.md</a> · Source: <a href="https_client.py">https_client.py</a></span>
+
+<h2 data-num="00">Prerequisites</h2>
+<div class="prereq-links">
+  <a class="prereq-tag" href="../01_raw_socket/tutorial.html">Module 1: Raw TCP Socket</a>
+  <a class="prereq-tag" href="../03_http_from_scratch/tutorial.html">Module 3: HTTP/1.1 From Scratch</a>
+</div>
+
+<h2 data-num="01">The Big Analogy</h2>
+<div class="callout callout-analogy">
+<div class="callout-label">🍽️ The Restaurant, continued</div>
+<p>The runner's route to the warehouse hasn't changed. The order slip
+hasn't changed — same handwriting, same format, same words. The only
+difference is: before handing the slip over, the runner now locks it
+inside a tamper-evident courier bag, and first checks the warehouse's ID
+badge against a list of badges the runner's own head office actually
+trusts — and checks that the name on the badge matches the warehouse the
+runner was told to visit. If the badge is expired, or belongs to a
+different warehouse entirely, the runner refuses to hand anything over,
+full stop.</p>
+<p>Nobody at the warehouse counter, and nobody reading the slip once it's
+delivered, has to know any of this happened. The order-taking and
+order-reading logic (Module 3) is completely unaware that a courier bag
+and an ID check now exist.</p>
+</div>
+
+<h2 data-num="02">What Happens, Step by Step</h2>
+<ol class="step-list">
+<li>Open a plain TCP connection exactly like Module 1, to port 443 instead of 80.</li>
+<li><code>ssl.create_default_context()</code> loads the OS's list of trusted certificate authorities.</li>
+<li><code>context.wrap_socket(raw_sock, server_hostname=host)</code> performs the TLS handshake: the server presents its certificate, the context checks it chains to a trusted authority AND covers the requested hostname, and (if both pass) a shared encryption key is negotiated.</li>
+<li>If either check fails, <code>wrap_socket()</code> raises <code>ssl.SSLCertVerificationError</code> and no HTTP request is ever sent.</li>
+<li>If it succeeds, the returned <code>SSLSocket</code> is handed straight to Module 3's <code>format_request()</code> and <code>parse_response()</code> — which have no idea, and don't need to know, that encryption is involved.</li>
+</ol>
+
+<h2 data-num="03">A Map of the Layers</h2>
+<div class="diagram-box">
+<div class="kv-diagram">
+  Module 3's code:     format_request()  ---sendall--->  parse_response()
+                              |                                  ^
+                              v                                  |
+  This module's code:   sock.sendall(bytes)              sock.recv(n)
+                              |                                  ^
+                              |  <-- SSLSocket: encrypts/decrypts transparently -->
+                              v                                  |
+  Module 1's code:      raw TCP byte stream  <===== the network =====>
+
+  Everything ABOVE the SSLSocket line is identical whether or not TLS is used.
+  Everything BELOW it is Module 1, completely unaware TLS exists.
+  TLS lives entirely IN BETWEEN — a wrapper, not a rewrite.
+</div>
+<p class="diagram-caption">TLS is a socket wrapper, not a parallel protocol stack</p>
+</div>
+
+<h2 data-num="04">The Code, Explained</h2>
+
+<p>The entire module's new logic is four lines:</p>
+<div class="filename">https_client.py</div>
+<pre><code class="language-python">raw_sock = open_connection(host, port, timeout=timeout)   # Module 1, unchanged
+context = ssl.create_default_context()
+tls_sock = context.wrap_socket(raw_sock, server_hostname=host)
+return tls_sock</code></pre>
+<p><code>create_default_context()</code> — not a bare, unverified socket
+wrap — is the safety-critical choice here. Older code that skips it and
+calls a low-level wrap function directly can end up with certificate
+verification silently disabled, which looks like working HTTPS (the page
+loads!) while providing none of its security guarantees. See DECISIONS.md
+for why this is called out as a convention worth explaining, not a
+default worth assuming.</p>
+
+<p>And the proof that nothing downstream changed:</p>
+<div class="filename">https_client.py</div>
+<pre><code class="language-python">from http_client import format_request, parse_response, HTTPResponse  # Module 3, UNCHANGED
+
+def fetch_https(url_string, base=None):
+    ...
+    sock = open_tls_connection(url.host, url.port)
+    send_all(sock, format_request(url))      # same function, TLS or not
+    return parse_response(sock)               # same function, TLS or not</code></pre>
+
+<h2 data-num="05">Limits / What You Cannot Do Yet</h2>
+<div class="compare-grid">
+  <div class="compare-col cant">
+    <h4>Can't do yet</h4>
+    <ul>
+      <li>Implement TLS itself — the cryptography is entirely `ssl`/OpenSSL's job (see DECISIONS.md)</li>
+      <li>Pin a specific certificate or handle client-certificate auth</li>
+      <li>Inspect or override which CAs are trusted (uses the OS's default trust store as-is)</li>
+    </ul>
+  </div>
+  <div class="compare-col can">
+    <h4>Can do now</h4>
+    <ul>
+      <li>Fetch any real HTTPS page with the identical parsing logic built in Module 3</li>
+      <li>Prove, with a real failing connection, that certificate chain validation is actually active</li>
+      <li>Prove, with a real failing connection, that hostname verification is actually active</li>
+    </ul>
+  </div>
+</div>
+
+<h2 data-num="06">Run It</h2>
+<pre><code class="language-bash">cd 04_https_tls
+python https_client.py</code></pre>
+<p>Exact output from a real run, unedited:</p>
+<pre><code>======================================================================
+PART 1 — a real HTTPS request, using Module 3's request/response
+logic completely unmodified, just wrapped in TLS
+======================================================================
+  TLS established: TLSv1.3, cipher: TLS_AES_256_GCM_SHA384
+status: 200 OK
+body length: 559 bytes
+body starts with: b'&lt;!doctype html&gt;&lt;html lang="en"&gt;&lt;head&gt;&lt;title&gt;Example Domain&lt;/'
+
+======================================================================
+PART 2 — proving verification is real: connecting to a site with
+a deliberately EXPIRED certificate should fail, not succeed
+======================================================================
+EXPECTED FAILURE (verification correctly rejected the cert):
+  SSLCertVerificationError: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: certificate has expired (_ssl.c:1000)
+
+======================================================================
+PART 3 — proving hostname checking is real: connecting to a host
+whose certificate is valid for a DIFFERENT name should also fail
+======================================================================
+EXPECTED FAILURE (hostname mismatch correctly rejected):
+  SSLCertVerificationError: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: Hostname mismatch, certificate is not valid for 'wrong.host.badssl.com'. (_ssl.c:1000)</code></pre>
+
+<div class="callout callout-trouble">
+<div class="callout-label">⚠ Getting a blank or broken result?</div>
+<ul>
+<li><strong>Part 1 fails with a verification error on a real site:</strong> your system's CA trust store may be outdated or corrupted — this is worth investigating for real (it's exactly the failure mode that protects you from a genuine attack), not silently working around.</li>
+<li><strong>Parts 2/3 "succeed" instead of failing:</strong> something in your network path (a corporate TLS-inspecting proxy) may be re-signing certificates with its own trusted root — check whether your organization operates one.</li>
+<li><strong><code>socket.timeout</code> connecting to badssl.com:</strong> some networks block it specifically as a test/security site — try from an unrestricted connection.</li>
+</ul>
+</div>
+
+<h2 data-num="07">Brain Exercise</h2>
+<div class="callout callout-brain">
+<div class="callout-label">🧠 Think before you reveal</div>
+<p><strong>If `server_hostname` were left out of `wrap_socket()` entirely
+— socket wrapped, but with no hostname stated — would `create_default_context()`'s
+verification still meaningfully protect you?</strong></p>
+<details>
+<summary>Reveal the answer</summary>
+<p>Not fully. Chain validation (is this certificate signed by a trusted
+authority?) can still run without knowing the intended hostname — but
+hostname verification (does this certificate actually belong to
+<em>the site I meant to visit</em>?) cannot happen at all without it,
+because there's nothing to compare the certificate's names against. A
+certificate can be perfectly validly signed by a trusted CA and still
+belong to a completely different, unrelated domain — chain validity says
+"this certificate is genuine," not "this certificate is for the site you
+think it's for." That second, distinct guarantee is exactly what Part 3's
+`wrong.host.badssl.com` test is designed to catch, and it depends
+entirely on `server_hostname` being passed.</p>
+</details>
+</div>
+
+<h2 data-num="08">There Are No Dumb Questions</h2>
+
+<div class="qa-item">
+<div class="qa-q">If TLS is "just" a socket wrapper, why does HTTPS use a different port (443) than HTTP (80)?</div>
+<div class="qa-a">Historical convention, not a technical requirement of TLS itself — a server could be configured to speak TLS on any port. Port 443 was registered early on specifically for "HTTP over TLS," and universal adoption of that convention is what lets a client assume `https://` means "try port 443" without any negotiation, the same way `DEFAULT_PORTS` in Module 2 encodes it.</div>
+</div>
+
+<div class="qa-item">
+<div class="qa-q">Does `parse_response()` need to know it's reading from an `SSLSocket` instead of a plain one?</div>
+<div class="qa-a">No — and that's the module's central point. `SSLSocket.recv()` has the identical method signature and behavior contract as `socket.socket.recv()`: it returns decrypted plaintext bytes, blocks the same way, and signals connection-closed with `b""` the same way. Every function in Module 3 that calls `sock.recv()` or `sock.sendall()` works unmodified against either socket type.</div>
+</div>
+
+<div class="qa-item">
+<div class="qa-q">Is it actually dangerous to skip certificate verification, or is that overly cautious for a learning project?</div>
+<div class="qa-a">It's genuinely dangerous, not just overly cautious, which is why this module includes Parts 2 and 3 instead of stopping at Part 1. Skipping verification means any attacker capable of intercepting your network traffic (a hostile Wi-Fi network, a compromised router) can present <em>any</em> certificate at all and your client will accept it — defeating the entire purpose of encryption, since the attacker can decrypt, read, and even modify traffic while your client shows no error.</div>
+</div>
+
+<h2 data-num="09">What's Next</h2>
+<p>This is the end of Track 1's networking phase. Every module from here
+through Module 16 assumes you already have real HTML/CSS bytes in hand —
+Module 5 starts turning the bytes Modules 1–4 can now reliably fetch into
+a structured document, starting with the tokenizer.</p>
+
+<div class="module-nav">
+  <a href="../03_http_from_scratch/tutorial.html"><span class="dir">← Previous</span>Module 3: HTTP/1.1 From Scratch</a>
+  <a class="next" href="../05_html_tokenizer/tutorial.html"><span class="dir">Next →</span>Module 5: HTML Tokenizer</a>
+</div>
+
+</body>
+</html>
