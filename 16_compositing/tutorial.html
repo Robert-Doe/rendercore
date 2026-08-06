@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Module 16 — Compositing &amp; Layers | Build a Browser From Scratch</title>
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body style="--accent:#fb7185; --accent-soft:rgba(251,113,133,0.12);">
+
+<div class="course-header">
+  <span class="module-badge">MODULE 16</span>
+  <span class="track-tag">Track 1 · Phase 4: From Geometry to Pixels (final module)</span>
+  <h1>Compositing <span class="accent">&amp; Layers</span></h1>
+  <p class="subtitle">Every earlier module could report success while the final picture was still wrong. This one actually looks at the picture.</p>
+</div>
+
+<span class="decisions-badge">📄 Companion doc: <a href="DECISIONS.md">DECISIONS.md</a> · Source: <a href="compositing.py">compositing.py</a></span>
+
+<h2 data-num="00">Prerequisites</h2>
+<div class="prereq-links">
+  <a class="prereq-tag" href="../13_flexbox_stacking/tutorial.html">Module 13: Stacking &amp; a Flexbox Subset</a>
+  <a class="prereq-tag" href="../15_rasterizer/tutorial.html">Module 15: Rasterization to Canvas</a>
+</div>
+
+<h2 data-num="01">The Big Analogy</h2>
+<div class="callout callout-analogy">
+<div class="callout-label">🍽️ The Restaurant, continued</div>
+<p>The expo checklist was correct (Module 14). The plating staff followed
+it exactly, item by item (Module 15). But nobody has actually looked at
+the finished plate yet to confirm the sauce swirl is genuinely visible on
+top of the garnish, and not secretly hidden underneath it because
+someone plated in the wrong physical order despite having the right
+checklist. This module is a food photographer standing over the table,
+checking the ACTUAL PLATE — not the checklist, not the plating staff's
+individual movements — to confirm what a diner would really see.</p>
+</div>
+
+<h2 data-num="02">What Happens, Step by Step</h2>
+<ol class="step-list">
+<li>Build a scene where two boxes genuinely overlap in real pixel space, deliberately arranged so DOM order and z-index order disagree about which should be visually on top.</li>
+<li>Generate the display list (Module 14) and rasterize it onto a real canvas (Module 15) — same pipeline as before, nothing new here.</li>
+<li>Pick a real (x, y) coordinate that falls inside BOTH boxes' overlapping region.</li>
+<li>Ask Tk directly — not the display list, not the original scene data — what's actually visible at that exact point, using <code>canvas.find_overlapping()</code>.</li>
+<li>Confirm the TOPMOST item Tk reports is the one z-index says should win — even though it's the one DOM order says should have been painted first (and therefore end up on the bottom).</li>
+</ol>
+
+<h2 data-num="03">A Map of the Adversarial Scene</h2>
+<div class="diagram-box">
+<div class="kv-diagram">
+  children list order:  [first_in_dom (RED, z=5), second_in_dom (BLUE, z=1)]
+
+  DOM-order-only painting (WRONG, if this module's earlier steps had a
+  hidden bug) would paint RED first, then BLUE on top:
+      overlap region would show BLUE on top   <- WRONG, contradicts z-index
+
+  Actual paint order (Module 13's rule: z-index first, DOM order only
+  breaks ties) paints BLUE first (z=1), then RED on top (z=5):
+      overlap region shows RED on top          <- CORRECT
+
+  overlap region:  x:[50,100]  y:[50,100]
+  test point:      (75, 75)   <- solidly inside BOTH boxes
+
+  canvas.find_overlapping(75,75,75,75) -> (blue_id, red_id)
+                                                    ^^^^^^^ LAST = topmost = visible
+</div>
+<p class="diagram-caption">the test only means something because DOM order and z-index order were made to disagree on purpose</p>
+</div>
+
+<h2 data-num="04">The Code, Explained</h2>
+
+<p>The check that makes this module different from every earlier one —
+it asks Tk, not the code that produced the scene:</p>
+<div class="filename">compositing.py</div>
+<pre><code class="language-python">stack_at_point = canvas.find_overlapping(*overlap_point, *overlap_point)
+topmost_item = stack_at_point[-1]                     # bottom-to-top order
+topmost_color = canvas.itemcget(topmost_item, "fill")</code></pre>
+<p><code>find_overlapping</code> is a real Tk query against the actual
+rendered canvas state — it has no idea a "z-index" or a "display list"
+ever existed. If every module before this one had a hidden bug that
+silently discarded paint order somewhere between the display list and
+the final canvas, THIS is the check that would catch it, because it
+never trusts the pipeline's own claim of correctness — it asks the
+rendering surface directly.</p>
+
+<h2 data-num="05">Limits / What You Cannot Do Yet</h2>
+<div class="compare-grid">
+  <div class="compare-col cant">
+    <h4>Can't do yet</h4>
+    <ul>
+      <li>Real GPU-backed layers or parallel compositing — everything is one 2D Tk canvas</li>
+      <li>Nested stacking contexts (inherited from Module 13's own scope)</li>
+      <li>Opacity/blending between overlapping semi-transparent elements</li>
+    </ul>
+  </div>
+  <div class="compare-col can">
+    <h4>Can do now</h4>
+    <ul>
+      <li>Verify, at the pixel level, that stacking order is visually correct — not just structurally correct as data</li>
+      <li>Catch a whole category of bug that Modules 14 and 15's own checks structurally cannot catch</li>
+    </ul>
+  </div>
+</div>
+
+<h2 data-num="06">Run It</h2>
+<pre><code class="language-bash">cd 16_compositing
+python compositing.py</code></pre>
+<p>Exact output from a real run, unedited:</p>
+<pre><code>Display list order (Module 14's output)
+  [0] DrawRect((50,50) 100x100, blue)
+  [1] DrawRect((0,0) 100x100, red)
+
+Querying REAL canvas state at overlap point (75, 75)
+======================================================================
+items at this point, bottom-to-top: (1, 2)
+topmost (actually VISIBLE) item id: 2
+topmost item's fill color: 'red'
+
+======================================================================
+Checks
+======================================================================
+both overlapping items are present at the shared point: True
+the VISIBLE (topmost) color at the overlap is RED — the higher z-index item — even though it was FIRST in the DOM/children list: True</code></pre>
+
+<div class="callout callout-trouble">
+<div class="callout-label">⚠ Getting a blank or broken result?</div>
+<ul>
+<li><strong>Topmost color comes back blue instead of red:</strong> this is exactly the bug this module exists to catch — check that `rasterize()` (Module 15) iterates the display list in the order given, and that the display list itself (Module 14) actually called Module 13's `paint_order()` rather than just using DOM order.</li>
+<li><strong><code>find_overlapping</code> returns only one item:</strong> your test point may have landed outside the actual overlap region — recompute it from both boxes' real coordinates.</li>
+</ul>
+</div>
+
+<h2 data-num="07">Brain Exercise</h2>
+<div class="callout callout-brain">
+<div class="callout-label">🧠 Think before you reveal</div>
+<p><strong>Why couldn't Module 15's own checks — which DID verify each
+item's exact coordinates and colors — have caught a "paints in DOM order
+instead of paint order" bug, even though that's clearly a real, serious
+rendering bug?</strong></p>
+<details>
+<summary>Reveal the answer</summary>
+<p>Because Module 15 checked each item IN ISOLATION — "does this specific
+canvas item have the color and coordinates its command specified" — never
+"given everything else on the canvas, what's actually visible at this
+point." A DOM-order painting bug wouldn't change any individual item's
+color or coordinates at all; it would only change the ORDER in which
+otherwise-correct items got drawn, which only becomes observable once
+you ask about the relationship BETWEEN overlapping items — exactly the
+question `find_overlapping` answers and individual-item checks structurally
+cannot. This is a general lesson worth keeping past this course: testing
+that each piece is individually correct is necessary, but it's not the
+same claim as testing that the assembled whole is correct.</p>
+</details>
+</div>
+
+<h2 data-num="08">There Are No Dumb Questions</h2>
+
+<div class="qa-item">
+<div class="qa-q">Is this really "compositing," or is it just a more thorough test of what Module 15 already does?</div>
+<div class="qa-a">Both, honestly — and that's named directly in DECISIONS.md. Real browser compositing (combining separately-rendered layers, often on the GPU, into one final frame) is more architecturally involved than what this module does. But the CONCEPT compositing is responsible for — "what does the assembled, overlapping result actually look like, not just what does each piece look like alone" — is genuinely what this module verifies, using the single-surface tools this course has available.</div>
+</div>
+
+<div class="qa-item">
+<div class="qa-q">Why does the module deliberately construct a scene where the "wrong" answer and the "right" answer would look different, instead of using a more natural-looking test page?</div>
+<div class="qa-a">Because a test where the correct implementation and a broken one would produce the SAME result can't actually verify anything — it would pass whether or not the code under test was right. Adversarially designing the DOM order and z-index order to disagree is what makes "the check passed" mean something.</div>
+</div>
+
+<div class="qa-item">
+<div class="qa-q">This closes Track 1 — what's actually true about the engine at this exact point?</div>
+<div class="qa-a">A URL can go in one end (Module 2), real bytes come back over a real network connection, encrypted if needed (Modules 1, 3, 4), get parsed into a real DOM and real computed styles (Modules 5-9), get laid out into real geometry including text wrapping and flex distribution (Modules 10-13), get flattened into an ordered display list (Module 14), and get rendered onto a real canvas with pixel-verified correct stacking (Modules 15-16). It's static — nothing can change after the first render — but every piece of that pipeline is real, running code, not a description of one.</div>
+</div>
+
+<h2 data-num="09">What's Next</h2>
+<p>Track 1 is complete. Track 2 begins with Module 17: making this
+pipeline interactive by building the event loop that lets it respond to
+clicks and keystrokes without blocking, the first step toward a page that
+can change after it first loads.</p>
+
+<div class="module-nav">
+  <a href="../15_rasterizer/tutorial.html"><span class="dir">← Previous</span>Module 15: Rasterization to Canvas</a>
+  <a class="next" href="../17_event_loop/tutorial.html"><span class="dir">Next →</span>Module 17: The Event Loop</a>
+</div>
+
+</body>
+</html>
