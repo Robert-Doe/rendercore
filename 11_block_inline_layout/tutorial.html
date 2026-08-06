@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Module 11 — Block &amp; Inline Layout | Build a Browser From Scratch</title>
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body style="--accent:#f97316; --accent-soft:rgba(249,115,22,0.12);">
+
+<div class="course-header">
+  <span class="module-badge">MODULE 11</span>
+  <span class="track-tag">Track 1 · Phase 3: From Tree to Geometry</span>
+  <h1>Block &amp; Inline <span class="accent">Layout</span></h1>
+  <p class="subtitle">A box's POSITION depends on its parent, already known. A box's auto SIZE depends on its children, not known yet. One recursive function has to satisfy both.</p>
+</div>
+
+<span class="decisions-badge">📄 Companion doc: <a href="DECISIONS.md">DECISIONS.md</a> · Source: <a href="block_layout.py">block_layout.py</a></span>
+
+<h2 data-num="00">Prerequisites</h2>
+<div class="prereq-links">
+  <a class="prereq-tag" href="../prereqs/coordinate_systems.html">Coordinate Systems &amp; the Box Idea</a>
+  <a class="prereq-tag" href="../prereqs/trees_and_recursion.html">Trees &amp; Recursive Traversal</a>
+  <a class="prereq-tag" href="../10_box_model/tutorial.html">Module 10: The Box Model</a>
+</div>
+
+<h2 data-num="01">The Big Analogy</h2>
+<div class="callout callout-analogy">
+<div class="callout-label">🍽️ The Restaurant, continued</div>
+<p>Plates get set on a table one at a time, top of the table downward, each
+new plate going right below the last one's full footprint (including the
+clear space kept around it). You can place a plate's OWN position the
+moment you know where the plate before it ended — that's easy, top-down.
+But if someone asks "how much total table length does this whole table
+setting take up," you can't answer until every plate on it has actually
+been placed and you've measured all the way to the last one. Same table,
+same single pass of setting plates down — but position and total-length
+are answered at different moments during that one pass.</p>
+</div>
+
+<h2 data-num="02">What Happens, Step by Step</h2>
+<ol class="step-list">
+<li>Given a containing block (x, y, width) — where this box's margin box should start, and how wide the space around it is — compute this box's own margin/border/padding, then its content box's x and y.</li>
+<li>If <code>width</code> is explicit, use it (adjusted for box-sizing). If it's <code>auto</code>, fill the containing block's width minus this box's own margin/border/padding.</li>
+<li>Walk this box's <code>display: block</code> children, IN ORDER. For each one, recursively lay it out at the current vertical cursor position, then advance the cursor by that child's full margin-box height.</li>
+<li>Once every child has been laid out (and the cursor has moved past all of them), THAT final cursor position minus the starting position is this box's auto content height — but only if <code>height</code> was <code>auto</code> to begin with.</li>
+<li>Return this box's full computed geometry, with its laid-out children nested inside it.</li>
+</ol>
+
+<h2 data-num="03">A Map of the Recursion</h2>
+<div class="diagram-box">
+<div class="kv-diagram">
+  layout_block(outer, containing_block=viewport)
+  │
+  │  content_x, content_y computed NOW (needs containing_block — HAVE IT)
+  │
+  ├─ layout_block(a, cb={x:10,y:10,width:400})      <- position known top-down
+  │     returns a's full box (height=50 explicit)
+  │     cursor_y += a.margin_box_height   (70)
+  │
+  ├─ layout_block(b, cb={x:10,y:80,width:400})
+  │     │
+  │     ├─ layout_block(b1, ...) -> height=30
+  │     │     cursor_y += 30
+  │     ├─ layout_block(b2, ...) -> height=40 + margin-top 10
+  │     │     cursor_y += 50
+  │     │
+  │     b's own auto content_height = 80    <- ONLY known after b1, b2 returned
+  │     returns b's full box
+  │     cursor_y += b.margin_box_height   (94)
+  │
+  outer's own auto content_height = 70 + 94 = 164   <- ONLY known after a, b returned
+  returns outer's full box
+</div>
+<p class="diagram-caption">position flows down the left margin of this diagram; auto-height answers bubble up the right</p>
+</div>
+
+<h2 data-num="04">The Code, Explained</h2>
+
+<p>Width resolves immediately, using only information already available:</p>
+<div class="filename">block_layout.py</div>
+<pre><code class="language-python">content_width = _resolve_size(
+    width_spec, containing_block.width - margin.horizontal,
+    padding.horizontal, border.horizontal, box_sizing,
+)</code></pre>
+
+<p>Height is different — notice it's computed AFTER the entire children loop, using a value (`cursor_y`) that loop just finished producing:</p>
+<div class="filename">block_layout.py</div>
+<pre><code class="language-python">for child in node.children:
+    ...
+    child_box = layout_block(child, child_cb, styles)
+    cursor_y += child_box.margin_box_height
+
+if height_spec == "auto":
+    content_height = cursor_y - content_y   # only correct AFTER the loop</code></pre>
+<p>Nothing special makes this ordering happen — it's just where the lines
+of code physically sit. That's the whole trick: recursion plus "read the
+loop result after the loop" is sufficient to get top-down position and
+bottom-up sizing both correct, in one function, without two separate
+passes over the tree.</p>
+
+<h2 data-num="05">Limits / What You Cannot Do Yet</h2>
+<div class="compare-grid">
+  <div class="compare-col cant">
+    <h4>Can't do yet</h4>
+    <ul>
+      <li>Lay out inline content or text at all — completely skipped, not even attempted (Module 12)</li>
+      <li>Anything a user-agent stylesheet would normally give you for free — every <code>display: block</code> must be stated in the test CSS</li>
+      <li>Percentage widths/heights, floats, or positioned (absolute/fixed) elements</li>
+    </ul>
+  </div>
+  <div class="compare-col can">
+    <h4>Can do now</h4>
+    <ul>
+      <li>Correctly position a recursively nested tree of block boxes</li>
+      <li>Correctly resolve <code>width: auto</code> against a real containing block</li>
+      <li>Correctly resolve <code>height: auto</code> from real children, computed bottom-up</li>
+    </ul>
+  </div>
+</div>
+
+<h2 data-num="06">Run It</h2>
+<pre><code class="language-bash">cd 11_block_inline_layout
+python block_layout.py</code></pre>
+<p>Exact output from a real run, unedited (after two real bugs found by
+running this code were fixed — see section 07 and DECISIONS.md):</p>
+<pre><code>&lt;body&gt;               border-box=(0,0) 800x184   content=(0,0) 800x184
+  &lt;div id=outer&gt;       border-box=(0,0) 420x184   content=(10,10) 400x164
+    &lt;div id=a&gt;           border-box=(10,10) 400x50   content=(10,10) 400x50
+    &lt;div id=b&gt;           border-box=(10,80) 400x94   content=(17,87) 386x80
+      &lt;div id=b1&gt;          border-box=(17,87) 386x30   content=(17,87) 386x30
+      &lt;div id=b2&gt;          border-box=(17,127) 386x40   content=(17,127) 386x40
+
+======================================================================
+Checks
+======================================================================
+#outer content_width == explicit 400px (not stretched to 800): True
+#a content_width == outer's content_width, 400px (auto width fills its containing block exactly, no padding/border/margin of its own on the sides): True
+#a starts at y=outer.content_y (first child, no top margin): True
+#b's BORDER BOX starts BELOW #a's full margin box (50 height + 20 margin-bottom = 70px lower than #a's border box): True
+#b's auto content_height == sum of b1+b2's margin-box heights (30 + 50) == 80 (computed from children BEFORE #b's own box is done): True
+#outer's auto content_height == 164 (0 + #a's 70 + #b's 94 margin-box heights, stacked): True</code></pre>
+
+<div class="callout callout-trouble">
+<div class="callout-label">⚠ Getting a blank or broken result?</div>
+<ul>
+<li><strong><code>KeyError</code> looking up a node's style:</strong> this happened during this module's own development — a whitespace <code>TextNode</code> got treated as if it were the <code>&lt;body&gt;</code> element. Filter for the actual <code>Element</code> you want by tag, not by list position.</li>
+<li><strong>Padding/margin silently comes out as 0 despite being in your CSS:</strong> check you're not using CSS shorthand (<code>padding: 10px</code>) — Module 7 doesn't expand it. Use <code>padding-top</code>/<code>-right</code>/<code>-bottom</code>/<code>-left</code> explicitly.</li>
+<li><strong>Every element has height 0:</strong> confirm <code>display: block</code> is actually set in your CSS — there's no built-in default here.</li>
+</ul>
+</div>
+
+<h2 data-num="07">Brain Exercise</h2>
+<div class="callout callout-brain">
+<div class="callout-label">🧠 Think before you reveal</div>
+<p><strong>This module's own first test run failed two checks that turned
+out to be wrong TEST assertions, not layout bugs. One compared two
+sibling nodes' <em>content-box</em> y-coordinates to check how far apart
+they were vertically. Why is that the wrong pair of numbers to compare
+for that question, even though the layout itself was already correct?</strong></p>
+<details>
+<summary>Reveal the answer</summary>
+<p>Because each node's content-box y already has that SAME node's own
+margin-top + border-top + padding-top baked into it — and different
+nodes can have different values for those. <code>#a</code> has zero
+border/padding, so its content y equals its border-box y. <code>#b</code>
+has a 2px border and 5px padding, so its content y sits 7px BELOW its own
+border-box y. Comparing `a.content_y` to `b.content_y` doesn't measure
+"how far the layout cursor moved between placing these two boxes" — it
+measures that PLUS an extra 7px that belongs to `#b`'s own box structure,
+not to the gap between the two boxes. The correct comparison uses each
+node's BORDER-box y (the actual outer edge the cursor is tracking),
+which is exactly the fix applied here. This is a good general lesson:
+when verifying geometry, always be explicit about WHICH edge of a box
+you're comparing — content, padding, border, and margin edges are all
+different numbers, and mixing them across two different nodes produces
+answers that look plausible but are quietly wrong.</p>
+</details>
+</div>
+
+<h2 data-num="08">There Are No Dumb Questions</h2>
+
+<div class="qa-item">
+<div class="qa-q">Why does auto-width never need to look at children, but auto-height does?</div>
+<div class="qa-a">Because that's literally how the CSS spec defines block-level normal flow: width is resolved top-down from the containing block (a box doesn't get to be wider than the space it was given), while height falls out bottom-up from content unless explicitly overridden. It's an intentional asymmetry in the spec, not something this module invented — real browsers have exactly the same lopsided dependency.</div>
+</div>
+
+<div class="qa-item">
+<div class="qa-q">Could this same recursive-function trick handle inline layout too, or is Module 12 doing something fundamentally different?</div>
+<div class="qa-a">Fundamentally different, and that's why it's a separate module rather than an extension of this one. Block children stack strictly vertically, one per "row" — the cursor only ever needs to track a single Y value. Inline content has to track a horizontal cursor too, decide when a word doesn't fit and needs to wrap to a new line, and handle several inline elements sharing one line's height. That's a different algorithm shape, not just "the same thing with more properties."</div>
+</div>
+
+<div class="qa-item">
+<div class="qa-q">The demo hardcodes a viewport width of 800. Where would that number really come from?</div>
+<div class="qa-a">From the actual rendering surface — Module 15's Tkinter canvas will have a real pixel width, and that's what a real browser's viewport width is: the size of the window you're looking at. This module doesn't have a canvas yet, so 800 is a stand-in, named explicitly as one rather than presented as if it came from somewhere meaningful.</div>
+</div>
+
+<h2 data-num="09">What's Next</h2>
+<p>Every block box in this module's tree now has a real, correct
+position and size. Anything that isn't <code>display: block</code> —
+including every text node — was silently skipped. Module 12 builds
+exactly that missing piece: wrapping a run of text into lines that fit a
+given width.</p>
+
+<div class="module-nav">
+  <a href="../10_box_model/tutorial.html"><span class="dir">← Previous</span>Module 10: The Box Model</a>
+  <a class="next" href="../12_text_line_breaking/tutorial.html"><span class="dir">Next →</span>Module 12: Text Layout &amp; Line Breaking</a>
+</div>
+
+</body>
+</html>
