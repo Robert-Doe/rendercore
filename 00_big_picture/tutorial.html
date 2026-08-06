@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Module 0 — The Big Picture | Build a Browser From Scratch</title>
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body style="--accent:#e3b341; --accent-soft:rgba(227,179,65,0.12);">
+
+<div class="course-header">
+  <span class="module-badge">MODULE 0</span>
+  <span class="track-tag">Orientation · Zero Code</span>
+  <h1>The Big Picture: <span class="accent">Bits to Pixels</span></h1>
+  <p class="subtitle">Every major component of a real browser, in the order data actually flows through them — before any of them exist as code.</p>
+</div>
+
+<span class="decisions-badge">📄 Companion doc: <a href="DECISIONS.md">DECISIONS.md</a> — why the map is drawn this way</span>
+
+<h2 data-num="00">Prerequisites</h2>
+<p>None yet — this module <em>is</em> the prerequisite for everything else.
+Read this first, then go to <a href="../prerequisites.html">prerequisites.html</a>
+for the handful of underlying ideas (bytes, trees, state machines, the
+client-server model) that every module from here on assumes.</p>
+
+<h2 data-num="01">The Big Analogy</h2>
+
+<div class="callout callout-analogy">
+<div class="callout-label">🍽️ The Restaurant</div>
+<p>A browser is a restaurant that takes a spoken order and delivers a
+plated dish. You (the customer) say a name — a URL — to the host stand.
+From there, the order passes through a strict sequence of stations, and
+no station can do its job until the one before it has finished.</p>
+
+<p>The <strong>runner</strong> goes to the supplier's warehouse and brings
+back the raw ingredients in a sealed crate — this is the <strong>networking
+layer</strong>: finding the address, opening a connection, and hauling back
+raw bytes (the HTML, CSS, images).</p>
+
+<p>The <strong>prep cook</strong> opens the crate and lays the ingredients
+out in a structured way the kitchen understands — a tray of chopped
+vegetables here, a bowl of sauce there. This is the <strong>HTML parser</strong>
+turning a flat string of text into a structured tree (the DOM). A separate
+<strong>pastry chef</strong> reads the house style guide — same sauce recipe
+for every "soup" ticket, unless a specific ticket says otherwise — and this
+is the <strong>CSS parser and cascade</strong>: parsing the rules, then
+resolving which rule wins when more than one applies to the same dish.</p>
+
+<p>The <strong>line cook</strong> arranges everything on the plate — correct
+portion sizes, correct spacing, nothing overlapping wrong — that's
+<strong>layout</strong>. The <strong>garnish station</strong> adds the final
+visual details in the right order so the sauce doesn't hide the garnish —
+that's <strong>paint and compositing</strong>. The dish reaching the table is
+the pixels reaching your screen.</p>
+
+<p>A <strong>head waiter</strong> stands near the table the whole time,
+listening for the customer to say "actually, hold the onions" mid-meal.
+The waiter doesn't remake the entire dish — they walk back, tell exactly the
+right station to redo exactly the affected part, and nothing else. That's
+the <strong>event loop, the JS engine, and the invalidation/re-render
+pipeline</strong> working together.</p>
+
+<p>The restaurant serves <strong>many tables at once</strong>, each with its
+own waiter and its own running bill, and a kitchen fire at table 5 does not
+shut down table 9 — that's <strong>tabs and process isolation</strong>. And
+critically: <strong>no customer is allowed behind the counter.</strong> Every
+request — "bring me a knife," "let me into the walk-in" — goes through staff
+who check it against house policy first. That's <strong>sandboxing</strong>,
+and it's the subject of this course's bonus Module 25.</p>
+</div>
+
+<h2 data-num="02">What Happens, Step by Step</h2>
+
+<ol class="step-list">
+<li><strong>You type a URL and press Enter.</strong> The string gets parsed into scheme, host, port, and path (Module 2).</li>
+<li><strong>The hostname is resolved to an IP address</strong> by the OS's DNS resolver — a real step, but one this course treats as "hardware" (see DECISIONS.md §2).</li>
+<li><strong>A TCP connection is opened</strong> to that IP on the right port (Module 1).</li>
+<li><strong>If the scheme is HTTPS, a TLS handshake</strong> wraps that connection in encryption before anything else is sent (Module 4).</li>
+<li><strong>An HTTP request is sent, and a response is received</strong> — status line, headers, body — all hand-parsed (Module 3).</li>
+<li><strong>The HTML body is tokenized</strong> into tags, text, and comments (Module 5), then <strong>assembled into a DOM tree</strong> (Module 6).</li>
+<li><strong>Any CSS is tokenized and parsed</strong> into a list of (selector → declarations) rules (Module 7).</li>
+<li><strong>Each DOM node is matched against every rule</strong> that could apply to it (Module 8), and <strong>the cascade picks one winning value per property</strong> when rules conflict (Module 9).</li>
+<li><strong>Every node gets a box</strong> — content, padding, border, margin (Module 10) — and <strong>real x/y/width/height coordinates</strong> via block, inline, and flex layout (Modules 11–13), including wrapped text lines (Module 12).</li>
+<li><strong>The layout tree is flattened into a display list</strong> of draw commands (Module 14), which is <strong>rasterized onto a canvas</strong> (Module 15) with <strong>correct stacking order</strong> for overlapping elements (Module 16).</li>
+<li><strong>The page is now visible. The event loop starts</strong>, listening for clicks and key presses without blocking rendering (Module 17).</li>
+<li><strong>Any embedded scripts run</strong> in a from-scratch JS interpreter (Module 18), which can <strong>read and mutate the real DOM</strong> through explicit bindings (Module 19) — triggering steps 8–10 again, but only for what actually changed (Module 20).</li>
+<li><strong>Chrome UI wraps the whole thing</strong>: address bar, tabs, back/forward history (Module 21).</li>
+<li><strong>Cookies and storage</strong> persist state across requests and reloads (Module 22), scoped by <strong>same-origin policy</strong> so one site can't read another's data (Module 23).</li>
+<li><strong>Each tab runs as its own OS process</strong> (Module 24), and <strong>every privileged action a renderer wants to take is checked by a policy broker first</strong> (Module 25).</li>
+</ol>
+
+<h2 data-num="03">A Map of the Whole System</h2>
+
+<div class="diagram-box">
+<div class="kv-diagram">
+YOU TYPE A URL
+      |
+      v
++-----------------------+
+|  NETWORKING            |   DNS (OS) -> TCP (Mod 1) -> TLS (Mod 4) -> HTTP (Mod 3)
+|  bytes off the wire    |
++-----------------------+
+      |
+      v
++------------------------+       +------------------------+
+|  HTML PARSER            |       |  CSS PARSER             |
+|  tokenize -> DOM         |       |  tokenize -> rule list  |
+|  (Mod 5, 6)              |       |  (Mod 7)                 |
++------------------------+       +------------------------+
+            \                             /
+             \                           /
+              v                         v
+      +----------------------------------------+
+      |  STYLE / CASCADE                          |
+      |  match rules to nodes, resolve conflicts   |
+      |  -> one computed style per node (Mod 8, 9) |
+      +----------------------------------------+
+                         |
+                         v
+      +----------------------------------------+
+      |  LAYOUT                                    |
+      |  box model, block/inline/flex, text wrap    |
+      |  -> geometry per node (Mod 10, 11, 12, 13)  |
+      +----------------------------------------+
+                         |
+                         v
+      +----------------------------------------+
+      |  PAINT -> COMPOSITE                        |
+      |  display list -> rasterized, layered pixels |
+      |  (Mod 14, 15, 16)                            |
+      +----------------------------------------+
+                         |
+                         v
+                 PIXELS ON SCREEN
+                         ^
+                         |  (mutations loop back up to STYLE)
+      +----------------------------------------+
+      |  EVENT LOOP  <-->  JS ENGINE               |
+      |  input events         DOM-JS bindings        |
+      |  (Mod 17)              (Mod 18, 19, 20)      |
+      +----------------------------------------+
+
+  =====  outer frame around ALL of the above  =====
+  CHROME UI (Mod 21)  |  COOKIES/STORAGE (Mod 22)
+  SAME-ORIGIN POLICY (Mod 23)  |  PROCESS MODEL (Mod 24)
+  SANDBOXING BROKER (Mod 25)
+</div>
+<p class="diagram-caption">the static pipeline (top) · the interactive loop that re-enters it (middle) · the governance frame around the whole thing (bottom)</p>
+</div>
+
+<h2 data-num="04">The Component Map, Explained</h2>
+
+<p>Same boxes as the diagram, one plain-English sentence of "what this thing's job is" for each:</p>
+
+<table>
+<tr><th>Component</th><th>Its one job</th></tr>
+<tr><td>Networking stack</td><td>Turn a hostname into a live, byte-carrying connection to a real server, encrypted if needed.</td></tr>
+<tr><td>URL parser</td><td>Split a typed string into the pieces (scheme, host, port, path) every other component needs.</td></tr>
+<tr><td>HTML parser</td><td>Turn a flat string of markup into a tree structure the rest of the browser can walk.</td></tr>
+<tr><td>CSS parser</td><td>Turn stylesheet text into a structured list of "if you match this selector, apply these properties" rules.</td></tr>
+<tr><td>Style / cascade resolver</td><td>For every DOM node, pick exactly one final value per CSS property, even when several rules disagree.</td></tr>
+<tr><td>Layout engine</td><td>Convert "this element is a block, 400px wide, with a 10px margin" into an actual x, y, width, height on the page.</td></tr>
+<tr><td>Paint system</td><td>Turn "a box at (40, 120), 200×40, red background" into an ordered list of primitive draw instructions.</td></tr>
+<tr><td>Compositor / rasterizer</td><td>Execute the draw instructions in the right visual layering and produce actual pixels.</td></tr>
+<tr><td>JS engine</td><td>Run script code — completely independent of the DOM until something explicitly wires the two together.</td></tr>
+<tr><td>DOM–JS bindings</td><td>Expose specific, controlled hooks (like <code>getElementById</code>) so script can read/mutate the DOM.</td></tr>
+<tr><td>Event loop</td><td>Process input and script one task at a time, so rendering never observes a half-finished mutation.</td></tr>
+<tr><td>Invalidation pipeline</td><td>When something changes, redo only the affected style/layout/paint steps — not the whole page.</td></tr>
+<tr><td>Chrome UI</td><td>The part you actually see as "the browser" — address bar, tabs, back/forward — sitting outside any single page.</td></tr>
+<tr><td>Cookies / storage</td><td>Remember state across requests and reloads, scoped to who's allowed to read it.</td></tr>
+<tr><td>Same-origin policy</td><td>Stop a script loaded from one site from reading data that belongs to another.</td></tr>
+<tr><td>Process model</td><td>Run each tab in its own OS process so one tab's crash can't take down the others.</td></tr>
+<tr><td>Sandboxing broker</td><td>Force every risky action a page's code wants to take through a policy check, instead of trusting it.</td></tr>
+</table>
+
+<h2 data-num="05">Limits / What You Cannot Do Yet</h2>
+
+<div class="compare-grid">
+  <div class="compare-col cant">
+    <h4>Can't do yet</h4>
+    <ul>
+      <li>Run a single line of this browser</li>
+      <li>Verify any claim above against real output</li>
+      <li>Point to a specific byte and say "this is what triggered that behavior"</li>
+    </ul>
+  </div>
+  <div class="compare-col can">
+    <h4>Can do now</h4>
+    <ul>
+      <li>Name every major subsystem, in the order data flows through them</li>
+      <li>Explain, in one sentence, what each one's job is</li>
+      <li>Know exactly which module (1–25) will build each box</li>
+    </ul>
+  </div>
+</div>
+
+<h2 data-num="06">How To Use This Map As You Go</h2>
+<p>Keep this page open in a tab. Every later module's tutorial opens with a
+"00 Prerequisites" section tag-linking to specific ideas in
+<a href="../prerequisites.html">prerequisites.html</a>, and its "The Big
+Analogy" section will often extend the restaurant analogy from this page
+rather than invent a new one — so a term that feels shaky here should get
+concrete the moment its module is built.</p>
+
+<div class="callout callout-trouble">
+<div class="callout-label">⚠ If a term here still feels fuzzy</div>
+<p>That's expected — this page is a map, not a lived experience. If
+"cascade" or "compositing" doesn't click yet, don't stop and reread this
+page five times. Continue to <a href="../prerequisites.html">prerequisites.html</a>,
+then Module 1. Every term here gets a real, running, verifiable
+implementation later — abstract-first, then concrete, is the intended order.</p>
+</div>
+
+<h2 data-num="07">Brain Exercise</h2>
+
+<div class="callout callout-brain">
+<div class="callout-label">🧠 Think before you reveal</div>
+<p><strong>The network request succeeds. The HTML parses correctly into a
+full DOM tree. Every CSS rule parses and matches correctly. And yet the
+page renders as a completely blank white screen. Which single component in
+the diagram is the most likely place the failure lives — and why isn't it
+the network, HTML parser, or CSS parser?</strong></p>
+<details>
+<summary>Reveal the answer</summary>
+<p>The <strong>layout engine</strong> is the prime suspect. Network, HTML
+parsing, and CSS parsing are all stipulated to have succeeded — the DOM and
+the parsed rules exist and are correct. But nothing is visible until layout
+assigns real geometry (x, y, width, height) to each node. If layout
+produces zero-size or off-screen boxes for everything — a bug in the box
+model, a recursive layout call that never returns real numbers, a
+default width miscomputed as 0 — paint and compositing have nothing to
+draw, and you get a blank page despite every earlier stage being fully
+correct. This is exactly why Module 10's box model and Module 11's layout
+math get their own dedicated modules instead of being folded into "CSS
+stuff": a broken cascade gives you <em>wrong-looking</em> content, but a
+broken layout gives you <em>no visible</em> content at all.</p>
+</details>
+</div>
+
+<h2 data-num="08">There Are No Dumb Questions</h2>
+
+<div class="qa-item">
+<div class="qa-q">Is "the rendering engine" the same thing as "the browser"?</div>
+<div class="qa-a">No, and this course's two-track split makes the distinction load-bearing. The rendering engine (Track 1, Modules 1–16) is the pure bytes-to-pixels pipeline — it has no concept of tabs, history, or cookies. "The browser" (Track 2) is everything built on top of that engine to make it a usable application. Real-world parallel: Chromium's "Blink" is the rendering engine; "Chrome" is the browser application built around it — and other browsers (older Edge, Opera, Brave) reused Blink as their engine while building a completely different application around it.</div>
+</div>
+
+<div class="qa-item">
+<div class="qa-q">Why doesn't DNS get its own module if it's a real, separate protocol?</div>
+<div class="qa-a">Every from-scratch course has to draw a line around what counts as "the system we're building" versus "infrastructure we're allowed to stand on." We draw that line at the OS's TCP/IP stack: sockets, DNS resolution, and raw packet delivery are all treated the way an OS course treats the CPU — real, essential, and explicitly not what we're here to build. See DECISIONS.md §2 for the full reasoning.</div>
+</div>
+
+<div class="qa-item">
+<div class="qa-q">If the cascade and the CSS parser are both "about CSS," why are they two different modules?</div>
+<div class="qa-a">Parsing answers "what rules exist and what do they say." The cascade answers a completely different question: "given that three different rules all claim to set this element's color, which one actually wins?" You can have a perfect parser and still get every displayed color wrong if the cascade's conflict-resolution logic (specificity, source order, <code>!important</code>) is wrong. They're separate failure modes, so they're separate modules (7 and 9), with selector matching (8) as the bridge between them.</div>
+</div>
+
+<div class="qa-q" style="display:none"></div>
+
+<div class="qa-item">
+<div class="qa-q">Where does the JS engine "live" relative to the DOM — inside it, next to it?</div>
+<div class="qa-a">Next to it, and that's deliberate. JavaScript the language (ECMAScript) is specified with zero knowledge of HTML, CSS, or the DOM — you can run a JS engine with no web page in sight (Node.js proves this daily). The DOM is a set of objects the browser chooses to *hand to* the JS engine as a host environment. Module 18 builds a JS interpreter that knows nothing about the DOM; Module 19 is entirely about building the bridge. Keeping them separate mirrors how real engines (V8, SpiderMonkey) are architected — V8 has no idea what a <code>&lt;div&gt;</code> is.</div>
+</div>
+
+<div class="qa-item">
+<div class="qa-q">Why is sandboxing a "bonus module" instead of being built into every earlier module?</div>
+<div class="qa-a">Two reasons. Pedagogically, you need to understand what a component *does* before you can meaningfully reason about what it should be *prevented* from doing. Architecturally, this actually matches how sandboxing really works in Chromium/Firefox: the rendering and scripting logic doesn't have sandboxing woven through its own code — it runs inside a process that the OS and a separate broker process constrain from the outside. Module 25 builds that outside constraint as its own thing, over the top of everything Modules 1–24 already built, which is structurally honest to how it really works.</div>
+</div>
+
+<h2 data-num="09">What's Next</h2>
+<p>This map named every box; nothing in it has run yet. Next stop is
+<a href="../prerequisites.html">prerequisites.html</a> — the handful of
+ideas (raw bytes and encoding, the client-server request/response shape,
+trees, state machines, coordinate systems, event-driven code, and what an
+"origin" is) that every module from Module 1 onward assumes you already
+have a handle on. After that, <a href="../01_raw_socket/tutorial.html">Module
+1</a> opens a real TCP socket and gets real bytes from a real server —
+the first box on this map stops being a diagram and starts being code.</p>
+
+<div class="module-nav">
+  <span></span>
+  <a class="next" href="../01_raw_socket/tutorial.html"><span class="dir">Next →</span>Module 1: Raw TCP Socket Connection</a>
+</div>
+
+</body>
+</html>
