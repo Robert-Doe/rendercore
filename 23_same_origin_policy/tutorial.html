@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Module 23 — Same-Origin Policy | Build a Browser From Scratch</title>
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body style="--accent:#a21caf; --accent-soft:rgba(162,28,175,0.14);">
+
+<div class="course-header">
+  <span class="module-badge">MODULE 23</span>
+  <span class="track-tag">Track 2 · The Browser Application</span>
+  <h1>Same-Origin <span class="accent">Policy</span></h1>
+  <p class="subtitle">Every module before this one trusted the script it was running. This one is where trust becomes conditional.</p>
+</div>
+
+<span class="decisions-badge">📄 Companion doc: <a href="DECISIONS.md">DECISIONS.md</a> · Source: <a href="same_origin.py">same_origin.py</a></span>
+
+<h2 data-num="00">Prerequisites</h2>
+<div class="prereq-links">
+  <a class="prereq-tag" href="../prereqs/origins_and_security_boundary.html">Origins &amp; the Security Boundary</a>
+  <a class="prereq-tag" href="../19_dom_js_bindings/tutorial.html">Module 19: DOM–JS Bindings</a>
+  <a class="prereq-tag" href="../22_cookies_storage/tutorial.html">Module 22: Cookies &amp; Storage</a>
+</div>
+
+<h2 data-num="01">The Big Analogy</h2>
+<div class="callout callout-analogy">
+<div class="callout-label">🍽️ The Restaurant, continued</div>
+<p>Every table gets its own private bill, and staff won't hand table 9's
+bill to someone sitting at table 5 — even if that person insists they're
+"basically the same restaurant." But if TWO different guests are both
+seated at tables that belong to the SAME account (say, a company that
+booked two tables under one name), staff will treat requests from either
+table as coming from that shared account. The rule was never "no one can
+ever see another table's bill" — it's "the account has to actually
+match," checked every single time, not assumed.</p>
+</div>
+
+<h2 data-num="02">What Happens, Step by Step</h2>
+<ol class="step-list">
+<li>Every tab is registered with its real origin — computed from its URL (Module 2), not asserted by the tab itself.</li>
+<li>When a script asks to read another tab's document or cookies, the request carries the ASKING tab's origin, fixed when its interpreter was created — never something the script can change mid-run.</li>
+<li>The registry — a component outside any individual tab — compares the asking origin against the target tab's real origin.</li>
+<li>Exact match → real access is granted, and the requesting script gets real data back.</li>
+<li>Any mismatch — different host, different scheme, or different port — → a <code>SecurityError</code> is raised, denying the access outright.</li>
+</ol>
+
+<h2 data-num="03">A Map of the Four Tabs</h2>
+<div class="diagram-box">
+<div class="kv-diagram">
+  tab "bank"       -> https://bank.example.com:443    (the target, real data)
+  tab "evil"       -> https://evil.example.com:443    (different HOST)
+  tab "bank2"      -> https://bank.example.com:443    (SAME origin as bank)
+  tab "bank_http"  -> http://bank.example.com:80      (same HOST, different SCHEME)
+
+  evil      -> access bank's document   -> DENIED (host differs)
+  bank2     -> access bank's document   -> ALLOWED (exact origin match)
+  evil      -> access bank's cookies    -> DENIED (host differs)
+  bank_http -> access bank's document   -> DENIED (scheme differs, host does NOT save it)
+</div>
+<p class="diagram-caption">the check is scheme AND host AND port, together — matching any two isn't enough</p>
+</div>
+
+<h2 data-num="04">The Code, Explained</h2>
+
+<p>The entire enforcement is one comparison, in one place outside any
+tab's own script:</p>
+<div class="filename">same_origin.py</div>
+<pre><code class="language-python">def access_document(self, requesting_origin, target_tab_id):
+    target = self.tabs[target_tab_id]
+    if requesting_origin != target.origin:
+        raise SecurityError(...)
+    return target.document</code></pre>
+
+<p>And the origin a script is allowed to claim is fixed the moment its
+interpreter exists — never something the running script itself controls:</p>
+<div class="filename">same_origin.py</div>
+<pre><code class="language-python">def make_interpreter_for(registry, own_origin):
+    def js_accessForeignDocument(target_tab_id):
+        return registry.access_document(own_origin, target_tab_id)   # own_origin: closed over, fixed
+    ...</code></pre>
+
+<h2 data-num="05">Limits / What You Cannot Do Yet</h2>
+<div class="compare-grid">
+  <div class="compare-col cant">
+    <h4>Can't do yet</h4>
+    <ul>
+      <li>Any of the real, deliberate escape hatches (CORS headers, <code>postMessage</code>) that let origins opt INTO limited cross-origin communication</li>
+      <li>Enforce this at the process level — see Module 24 for the OS-backed version of this same boundary</li>
+      <li>Recover from a denial inside the script itself — Module 18 has no try/catch</li>
+    </ul>
+  </div>
+  <div class="compare-col can">
+    <h4>Can do now</h4>
+    <ul>
+      <li>Provably deny cross-origin document and cookie access</li>
+      <li>Provably ALLOW same-origin access — a real, working ALLOW path, not just an absent DENY</li>
+      <li>Correctly distinguish "same host, different scheme" from genuinely same-origin</li>
+    </ul>
+  </div>
+</div>
+
+<h2 data-num="06">Run It</h2>
+<pre><code class="language-bash">cd 23_same_origin_policy
+python same_origin.py</code></pre>
+<p>Exact output from a real run, unedited:</p>
+<pre><code>TEST 1 — a script in evil.example.com tries to read bank's document
+  result: DENIED
+  Blocked: a script from origin 'https://evil.example.com:443' attempted to read tab 'bank''s document, but that tab's origin is 'https://bank.example.com:443'.
+
+TEST 2 — a script in a SECOND bank.example.com tab reads the FIRST's document
+  result: OK
+  script's own output: ['&lt;body&gt; (real access granted)']
+
+TEST 3 — evil.example.com tries to read bank's COOKIES (the session token)
+  result: DENIED
+
+TEST 4 — SAME host, DIFFERENT scheme (http vs https) — must ALSO be denied
+  bank_http's origin:  http://bank.example.com:80
+  bank's origin:       https://bank.example.com:443
+  result: DENIED
+
+======================================================================
+Checks
+======================================================================
+TEST 1 (cross-origin document read) correctly DENIED: True
+TEST 2 (same-origin document read) correctly ALLOWED: True
+TEST 2's script genuinely received real document content, not a stub: True
+TEST 3 (cross-origin cookie read) correctly DENIED: True
+TEST 4 (same host, different SCHEME) correctly DENIED, proving the check is the full (scheme, host, port) triple, not just hostname: True</code></pre>
+
+<div class="callout callout-trouble">
+<div class="callout-label">⚠ Getting a blank or broken result?</div>
+<ul>
+<li><strong>TEST 2 fails (same-origin access denied):</strong> check the two "bank" tabs' origins are computed identically — a stray trailing slash or port mismatch between them would make even legitimately same-origin tabs compare as different.</li>
+<li><strong>TEST 4 unexpectedly ALLOWS access:</strong> check the origin comparison uses the FULL origin string (including scheme), not just the host portion.</li>
+</ul>
+</div>
+
+<h2 data-num="07">Brain Exercise</h2>
+<div class="callout callout-brain">
+<div class="callout-label">🧠 Think before you reveal</div>
+<p><strong>Suppose `make_interpreter_for` were changed so a script could
+call a new function, `setMyOrigin(fake_origin)`, that reassigned
+`own_origin` to whatever string the script wanted, before calling
+`accessForeignDocument`. What would this completely undermine, and why
+would it be worse than simply not having a same-origin policy at all?</strong></p>
+<details>
+<summary>Reveal the answer</summary>
+<p>It would undermine the ENTIRE policy, completely — any script could
+simply call <code>setMyOrigin("https://bank.example.com:443")</code>
+right before requesting access to the bank tab, and the check would pass
+every time, for every tab, regardless of where the script actually came
+from. This is arguably worse than having no policy at all, because a
+missing policy is at least honestly absent — a policy that LOOKS like it
+enforces a boundary but can be trivially bypassed by the exact party it's
+supposed to restrict creates false confidence. This is precisely why
+`own_origin` is captured once, at interpreter-creation time, by code
+OUTSIDE the script's own control, with no binding ever exposed that lets
+a running script rewrite it — the trustworthiness of a security check
+depends entirely on what the party being checked can and can't
+influence.</p>
+</details>
+</div>
+
+<h2 data-num="08">There Are No Dumb Questions</h2>
+
+<div class="qa-item">
+<div class="qa-q">Is `BrowserRegistry` a realistic model of how real browsers enforce this, or a simplification?</div>
+<div class="qa-a">It's a real, structurally accurate simplification — real browsers enforce same-origin checks in a privileged part of the browser (historically the browser process, or specific trusted code within the renderer that the untrusted page script can't reach), never inside code the page's own script could tamper with. `BrowserRegistry` living outside any tab's interpreter is a small-scale version of exactly that separation.</div>
+</div>
+
+<div class="qa-item">
+<div class="qa-q">Why does TEST 4 matter as much as TEST 1 — isn't "different hostname" the obvious case?</div>
+<div class="qa-a">Because "same hostname, different scheme" is the subtler, more realistic way a same-origin check actually gets implemented WRONG — a hostname-only comparison looks correct in the common case (most cross-origin attacks do involve a different hostname) and only reveals its flaw against exactly this kind of same-host, different-scheme scenario, which is precisely why it's tested explicitly here rather than assumed to follow automatically from TEST 1 passing.</div>
+</div>
+
+<div class="qa-item">
+<div class="qa-q">What would a real browser do differently if TEST 1's denied access were attempted from actual JavaScript?</div>
+<div class="qa-a">A real browser would typically throw a catchable `DOMException` (often "SecurityError" or a same-origin-related message) that the page's own `try`/`catch` COULD handle gracefully. This module's denial is an uncaught Python exception that halts the script entirely, because Module 18 doesn't implement `try`/`catch` — a real, named simplification, not a claim this matches real JS error-handling exactly.</div>
+</div>
+
+<h2 data-num="09">What's Next</h2>
+<p>This module's boundary is entirely logical — enforced by code choosing
+not to return data. Module 24 adds the OS-backed version of the same
+idea: running each tab in a genuinely separate operating system process,
+so a crash or a memory-corruption bug in one tab's renderer can't even
+theoretically reach another tab's memory, regardless of what any
+in-process check does or doesn't allow.</p>
+
+<div class="module-nav">
+  <a href="../22_cookies_storage/tutorial.html"><span class="dir">← Previous</span>Module 22: Cookies &amp; Storage</a>
+  <a class="next" href="../24_process_isolation/tutorial.html"><span class="dir">Next →</span>Module 24: Multi-Process Tab Isolation</a>
+</div>
+
+</body>
+</html>
