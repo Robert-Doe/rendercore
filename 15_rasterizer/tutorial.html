@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Module 15 — Rasterization to Canvas | Build a Browser From Scratch</title>
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body style="--accent:#ec4899; --accent-soft:rgba(236,72,153,0.12);">
+
+<div class="course-header">
+  <span class="module-badge">MODULE 15</span>
+  <span class="track-tag">Track 1 · Phase 4: From Geometry to Pixels</span>
+  <h1>Rasterization <span class="accent">to Canvas</span></h1>
+  <p class="subtitle">Every module so far has produced Python objects. This one produces something you could point a camera at.</p>
+</div>
+
+<span class="decisions-badge">📄 Companion doc: <a href="DECISIONS.md">DECISIONS.md</a> · Source: <a href="rasterizer.py">rasterizer.py</a></span>
+
+<h2 data-num="00">Prerequisites</h2>
+<div class="prereq-links">
+  <a class="prereq-tag" href="../14_display_list/tutorial.html">Module 14: Paint / Display List</a>
+</div>
+
+<h2 data-num="01">The Big Analogy</h2>
+<div class="callout callout-analogy">
+<div class="callout-label">🍽️ The Restaurant, continued</div>
+<p>The expo's checklist (Module 14) is finished and handed to the actual
+plating staff. The plating staff doesn't design anything, doesn't decide
+anything, doesn't even know why item 3 comes before item 4 — they just
+read line 1, do exactly what it says, read line 2, do exactly what it
+says. They're fast precisely BECAUSE they're not thinking about menus or
+seating charts anymore, just executing. That's Tkinter's job here: given
+a list of "draw a red rectangle here," it just draws a red rectangle
+there, with zero awareness that a CSS cascade or a DOM tree ever
+existed.</p>
+</div>
+
+<h2 data-num="02">What Happens, Step by Step</h2>
+<ol class="step-list">
+<li>Create a real Tk window and a real <code>Canvas</code> widget inside it.</li>
+<li>Walk Module 14's display list front to back, IN ORDER — the rasterizer never reorders anything; ordering was already decided.</li>
+<li>For each <code>DrawRect</code>: call <code>canvas.create_rectangle(..., fill=color, outline="")</code> — a filled box, no border.</li>
+<li>For each <code>DrawBorder</code>: call the SAME Tk method, but with <code>fill=""</code> and <code>outline=color</code> instead — an outline, no fill.</li>
+<li>For each <code>DrawText</code>: call <code>canvas.create_text(...)</code>.</li>
+<li>Force Tk to actually process everything (<code>root.update()</code>), then query the canvas back to confirm what's really there.</li>
+</ol>
+
+<h2 data-num="03">A Map of Command → Tk Call</h2>
+<div class="diagram-box">
+<div class="kv-diagram">
+  DrawRect(x=0,y=0, w=200,h=200, color=gray)
+        │
+        ▼
+  canvas.create_rectangle(0, 0, 200, 200, fill="gray", outline="")
+        │
+        ▼
+  a REAL item now exists inside Tk's own canvas state — queryable:
+     canvas.type(item)            -> "rectangle"
+     canvas.coords(item)          -> [0.0, 0.0, 200.0, 200.0]
+     canvas.itemcget(item,"fill") -> "gray"
+
+  DrawBorder(x=60,y=60, w=20,h=20, color=purple, border_width=3)
+        │
+        ▼
+  canvas.create_rectangle(60, 60, 80, 80, fill="", outline="purple", width=3)
+        │
+        ▼
+     canvas.type(item)               -> "rectangle"  (SAME Tk primitive)
+     canvas.itemcget(item,"outline") -> "purple"
+     canvas.itemcget(item,"fill")    -> ""            (this is what makes it a border, not a fill)
+</div>
+<p class="diagram-caption">two different display-list command types collapse onto ONE Tk primitive, distinguished only by which of fill/outline is set</p>
+</div>
+
+<h2 data-num="04">The Code, Explained</h2>
+
+<p>The whole rasterizer is a dispatch on command type, each branch a
+one-line call into Tk:</p>
+<div class="filename">rasterizer.py</div>
+<pre><code class="language-python">if isinstance(cmd, DrawRect):
+    item_id = canvas.create_rectangle(
+        cmd.x, cmd.y, cmd.x + cmd.width, cmd.y + cmd.height,
+        fill=cmd.color, outline="",
+    )
+elif isinstance(cmd, DrawBorder):
+    item_id = canvas.create_rectangle(
+        cmd.x, cmd.y, cmd.x + cmd.width, cmd.y + cmd.height,
+        fill="", outline=cmd.color, width=cmd.border_width,
+    )</code></pre>
+<p>Notice both branches call the exact same Tk method —
+<code>create_rectangle</code> — with different keyword arguments. Tk
+doesn't have a separate "border rectangle" object; a filled shape and an
+outlined shape are the same primitive used two different ways.</p>
+
+<h2 data-num="05">Limits / What You Cannot Do Yet</h2>
+<div class="compare-grid">
+  <div class="compare-col cant">
+    <h4>Can't do yet</h4>
+    <ul>
+      <li>GPU-accelerated compositing, layers, or anything beyond Tk's own 2D drawing</li>
+      <li>Real anti-aliasing or sub-pixel precision (whatever Tk's own default rendering provides, no more)</li>
+      <li>An actually-visible window — this module's own run withdraws it for automated checking</li>
+    </ul>
+  </div>
+  <div class="compare-col can">
+    <h4>Can do now</h4>
+    <ul>
+      <li>Turn any Module 14 display list into real, queryable canvas state</li>
+      <li>Verify pixels were drawn correctly WITHOUT a human looking at a screenshot</li>
+      <li>Show a real window with real content, given a real display list, any time from here forward</li>
+    </ul>
+  </div>
+</div>
+
+<h2 data-num="06">Run It</h2>
+<pre><code class="language-bash">cd 15_rasterizer
+python rasterizer.py</code></pre>
+<p>Exact output from a real run, unedited:</p>
+<pre><code>======================================================================
+Real Tkinter canvas items created from the display list
+======================================================================
+  item 1: tk type='rectangle'  coords=[0.0, 0.0, 200.0, 200.0]  <- from DrawRect((0,0) 200x200, gray)
+  item 2: tk type='rectangle'  coords=[10.0, 10.0, 60.0, 60.0]  <- from DrawRect((10,10) 50x50, blue)
+  item 3: tk type='rectangle'  coords=[0.0, 0.0, 50.0, 50.0]  <- from DrawRect((0,0) 50x50, red)
+  item 4: tk type='rectangle'  coords=[20.0, 20.0, 70.0, 70.0]  <- from DrawRect((20,20) 50x50, green)
+  item 5: tk type='rectangle'  coords=[60.0, 60.0, 80.0, 80.0]  <- from DrawBorder((60,60) 20x20, purple, 3px)
+
+======================================================================
+Checks — real queries against the real canvas, not the display list
+======================================================================
+one canvas item created per display-list command: True
+root's background item is a real Tk 'rectangle': True
+its EXACT coords match the command (10px Tk outline padding in bbox() does NOT affect coords() — see tutorial.html 08): True
+its fill color matches the command exactly: True
+D's border item is ALSO a Tk 'rectangle' (outline-only, no fill): True
+its outline color and width match the command: True</code></pre>
+<p>Want to actually SEE it? Remove the <code>root.withdraw()</code> line
+and add <code>root.mainloop()</code> at the end — a real window will
+open showing a gray square with a blue square, a red square, and a green
+square (with a purple-outlined box inside it) stacked in exactly the
+order this course has been predicting since Module 13.</p>
+
+<div class="callout callout-trouble">
+<div class="callout-label">⚠ Getting a blank or broken result?</div>
+<ul>
+<li><strong><code>TclError: no display name</code> (Linux/headless servers):</strong> Tkinter needs a display server (X11/Wayland) or a virtual one (like <code>Xvfb</code>) to create even a withdrawn window — this is a real environment requirement, not a bug in this module.</li>
+<li><strong>Colors or coordinates look off by a pixel when eyeballing a real window:</strong> that's likely <code>bbox()</code>'s ~1px padding being confused for the actual draw position — use <code>coords()</code> for the ground truth, as this module's own checks do.</li>
+</ul>
+</div>
+
+<h2 data-num="07">Brain Exercise</h2>
+<div class="callout callout-brain">
+<div class="callout-label">🧠 Think before you reveal</div>
+<p><strong>This module's checks call <code>root.update()</code> before
+inspecting any canvas state. What SPECIFIC check in this module's output
+would be at real risk of failing (not by ordering, but by seeing stale
+data) if that line were removed?</strong></p>
+<details>
+<summary>Reveal the answer</summary>
+<p>Every single one of the `canvas.coords()` / `canvas.type()` /
+`canvas.itemcget()` calls are at risk — not because the ITEMS wouldn't
+exist (Tkinter's `create_rectangle` does register the item immediately),
+but because Tk's rendering and internal state updates are tied to its
+event loop. Without giving that loop a chance to run
+(`root.update()`, or a real running `mainloop()`), some derived state
+Tk computes lazily could be queried before it's finalized. This module's
+checks happened to pass reliably with `update()` present precisely
+because it forces Tk to fully process everything pending before the very
+next line of Python runs — removing it turns a reliable check into one
+that depends on timing, which is exactly the category of bug this
+course's "run it and verify real output" discipline exists to catch
+before it ships.</p>
+</details>
+</div>
+
+<h2 data-num="08">There Are No Dumb Questions</h2>
+
+<div class="qa-item">
+<div class="qa-q">Why does `canvas.bbox()` return different numbers than what was actually drawn?</div>
+<div class="qa-a">This was tested directly during this module's development: `bbox()` pads its result by roughly 1 pixel on each side, even for a shape with `outline=""` and no visible border — it's Tk's own selection/hit-testing margin, not a measurement of the visible pixels. `coords()` returns the exact values passed to `create_rectangle`, which is why this module's verification uses `coords()`, not `bbox()`.</div>
+</div>
+
+<div class="qa-item">
+<div class="qa-q">Could this module export an actual image file, not just an in-memory canvas?</div>
+<div class="qa-a">Yes — `canvas.postscript(file="out.ps")` is a real Tk capability (verified directly: it produces a genuine, non-empty PostScript file describing everything drawn), with no extra libraries needed. Converting that PostScript to a PNG would need an external tool like Ghostscript, which is why this module doesn't include that extra step — but the PostScript export itself works with nothing beyond what's already imported here.</div>
+</div>
+
+<div class="qa-item">
+<div class="qa-q">Is `root.withdraw()` something a real browser would ever do?</div>
+<div class="qa-a">Not in normal operation — a browser's whole purpose is a visible window. It's used here purely so this module's checks can run automatically, without a person watching a window pop up and disappear. DECISIONS.md calls this out explicitly so it isn't mistaken for how Module 21's actual chrome UI will behave.</div>
+</div>
+
+<h2 data-num="09">What's Next</h2>
+<p>Individual items now draw correctly. What hasn't been tested yet is
+whether OVERLAPPING items — items whose regions genuinely intersect —
+end up visually layered in the right order once real pixels are
+involved, not just "listed in the right order" as data. Module 16 closes
+that gap and completes Track 1's entire rendering pipeline.</p>
+
+<div class="module-nav">
+  <a href="../14_display_list/tutorial.html"><span class="dir">← Previous</span>Module 14: Paint / Display List</a>
+  <a class="next" href="../16_compositing/tutorial.html"><span class="dir">Next →</span>Module 16: Compositing &amp; Layers</a>
+</div>
+
+</body>
+</html>
