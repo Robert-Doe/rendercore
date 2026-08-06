@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Module 10 — The Box Model | Build a Browser From Scratch</title>
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body style="--accent:#fb923c; --accent-soft:rgba(251,146,60,0.12);">
+
+<div class="course-header">
+  <span class="module-badge">MODULE 10</span>
+  <span class="track-tag">Track 1 · Phase 3: From Tree to Geometry</span>
+  <h1>The Box <span class="accent">Model</span></h1>
+  <p class="subtitle">Every element on every webpage is a rectangle, wrapped in three more rectangles. "width: 300px" doesn't always mean what it looks like it means.</p>
+</div>
+
+<span class="decisions-badge">📄 Companion doc: <a href="DECISIONS.md">DECISIONS.md</a> · Source: <a href="box_model.py">box_model.py</a></span>
+
+<h2 data-num="00">Prerequisites</h2>
+<div class="prereq-links">
+  <a class="prereq-tag" href="../prereqs/coordinate_systems.html">Coordinate Systems &amp; the Box Idea</a>
+  <a class="prereq-tag" href="../09_cascade/tutorial.html">Module 9: The Cascade</a>
+</div>
+
+<h2 data-num="01">The Big Analogy</h2>
+<div class="callout callout-analogy">
+<div class="callout-label">🍽️ The Restaurant, continued</div>
+<p>A plated dish has the food itself (content), the rim of the plate that
+keeps sauce from running (padding), the plate's own physical edge
+(border), and the empty tablecloth space kept clear around it so plates
+don't touch (margin). Here's the twist that trips people up in real
+kitchens too: when someone says "this plate is 12 inches," do they mean
+the food area alone, or the whole plate including its rim? Get that wrong
+and you'll cut a hole in the tablecloth layout that's the wrong size —
+which is exactly what <code>box-sizing</code> is actually deciding.</p>
+</div>
+
+<h2 data-num="02">What Happens, Step by Step</h2>
+<ol class="step-list">
+<li>Read <code>box-sizing</code> first — <code>content-box</code> (the default) or <code>border-box</code> — because it decides what the <code>width</code>/<code>height</code> numbers even mean.</li>
+<li>Read the four padding values, the border width, and the four margin values.</li>
+<li>If <code>width</code> is <code>auto</code>, stop — this module deliberately doesn't guess; that's Module 11's job, since it needs to know the containing block.</li>
+<li>Otherwise, if <code>box-sizing</code> is <code>border-box</code>, SUBTRACT padding and border from the declared width to get the actual content width. If it's <code>content-box</code>, the declared width IS the content width, unchanged.</li>
+<li>Build the box outward, one layer at a time: content → padding box (content + padding) → border box (padding box + border) → margin box (border box + margin).</li>
+</ol>
+
+<h2 data-num="03">A Map of the Box</h2>
+<div class="diagram-box">
+<div class="kv-diagram">
+  ┌───────────────────── margin box ─────────────────────┐
+  │                     (margin: 10px)                     │
+  │   ┌───────────────── border box ─────────────────┐   │
+  │   │                 (border: 5px)                  │   │
+  │   │   ┌───────────── padding box ─────────────┐   │   │
+  │   │   │             (padding: 20px)             │   │   │
+  │   │   │   ┌───────── content box ─────────┐   │   │   │
+  │   │   │   │                                 │   │   │   │
+  │   │   │   │      width x height             │   │   │   │
+  │   │   │   │                                 │   │   │   │
+  │   │   │   └────────────────────────────────┘   │   │   │
+  │   │   └────────────────────────────────────────┘   │   │
+  │   └────────────────────────────────────────────────┘   │
+  └─────────────────────────────────────────────────────────┘
+
+  content-box:  "width: 300px"  ==  the innermost box  ==  300
+  border-box:   "width: 300px"  ==  the BORDER box     ==  300
+                (content box shrinks to make room for padding+border)
+</div>
+<p class="diagram-caption">same four numbers (width, padding, border, margin) — box-sizing decides which rectangle "width" is naming</p>
+</div>
+
+<h2 data-num="04">The Code, Explained</h2>
+
+<p>The single line that IS this module's point:</p>
+<div class="filename">box_model.py</div>
+<pre><code class="language-python">if box_sizing == "border-box":
+    return max(0.0, spec - pad - bor)
+return spec   # content-box: the number IS the content size</code></pre>
+<p>Same inputs (<code>spec</code>, <code>pad</code>, <code>bor</code>),
+two completely different formulas, selected by one property. This is why
+`box_sizing` is read at the very top of `compute_box()`, before any
+content-size arithmetic happens at all — everything downstream depends on
+which formula got selected here.</p>
+
+<p>And the box expands outward, layer by layer, each one only knowing
+about the layer directly inside it:</p>
+<div class="filename">box_model.py</div>
+<pre><code class="language-python">@property
+def border_box_width(self) -> float:
+    return self.padding_box_width + self.border.horizontal</code></pre>
+
+<h2 data-num="05">Limits / What You Cannot Do Yet</h2>
+<div class="compare-grid">
+  <div class="compare-col cant">
+    <h4>Can't do yet</h4>
+    <ul>
+      <li>Resolve <code>width: auto</code> to a real size — needs the containing block (Module 11)</li>
+      <li>Give any box a position on the page — this module only computes SIZE</li>
+      <li>Independent border widths per side (uniform on all four here)</li>
+      <li>Percentage, em, or other relative units</li>
+    </ul>
+  </div>
+  <div class="compare-col can">
+    <h4>Can do now</h4>
+    <ul>
+      <li>Correctly compute content/padding/border/margin box sizes for explicit widths</li>
+      <li>Correctly handle <code>box-sizing: border-box</code> vs. the <code>content-box</code> default</li>
+      <li>Prove, with real arithmetic, exactly how those two modes diverge from identical input</li>
+    </ul>
+  </div>
+</div>
+
+<h2 data-num="06">Run It</h2>
+<pre><code class="language-bash">cd 10_box_model
+python box_model.py</code></pre>
+<p>Exact output from a real run, unedited:</p>
+<pre><code>content-box (the default) — 'width: 300px' means the CONTENT is 300px
+  content:      300.0 x 150.0
+  padding box:  340.0 x 190.0
+  border box:   350.0 x 200.0
+  margin box:   370.0 x 220.0
+
+border-box — the SAME declared width/padding/border, different meaning
+  content:      250.0 x 100.0
+  padding box:  290.0 x 140.0
+  border box:   300.0 x 150.0
+  margin box:   320.0 x 170.0
+
+======================================================================
+Checks
+======================================================================
+content-box: content_width == declared 300px: True
+content-box: border_box_width == 300 + 2*20 + 2*5 == 350: True
+border-box: content_width == 300 - 2*20 - 2*5 == 250: True
+border-box: border_box_width == the DECLARED 300px exactly (the defining property of border-box): True
+content-box vs border-box give DIFFERENT content widths from IDENTICAL input, purely from box-sizing: True
+width: auto resolves to content_width=0.0 here (real resolution deferred to Module 11, which knows the container): True</code></pre>
+
+<div class="callout callout-trouble">
+<div class="callout-label">⚠ Getting a blank or broken result?</div>
+<ul>
+<li><strong>border-box's border_box_width isn't exactly the declared width:</strong> check the subtraction happens BEFORE building the box outward, not after — content width must already be the shrunk value going in.</li>
+<li><strong>Negative content width on tiny boxes with large padding:</strong> <code>max(0.0, ...)</code> in `resolve()` clamps this — real browsers do the same rather than allowing negative content areas.</li>
+</ul>
+</div>
+
+<h2 data-num="07">Brain Exercise</h2>
+<div class="callout callout-brain">
+<div class="callout-label">🧠 Think before you reveal</div>
+<p><strong>A designer hands you a mockup where every box is specified by
+its OUTER edge — "this button is 44x44px including its border," full
+stop, regardless of how much border or padding it has. Which
+<code>box-sizing</code> value makes implementing that mockup trivial, and
+which one would force you to do subtraction math by hand for every single
+element?</strong></p>
+<details>
+<summary>Reveal the answer</summary>
+<p><code>border-box</code> makes it trivial — you write
+<code>width: 44px</code> and the border box IS 44px, regardless of how
+much padding or border you also add, because `compute_box()` does the
+subtraction for you. With `content-box` (the default), you'd have to
+manually compute `44 - padding*2 - border*2` and put THAT number in
+`width` — and if a designer later changes the padding, every one of those
+hand-computed widths silently becomes wrong. This is exactly why
+many real-world CSS resets set `box-sizing: border-box` globally as one
+of the first rules in a stylesheet — it makes "the number you type is the
+number you get on screen" true, matching how most visual design tools
+already think about sizing.</p>
+</details>
+</div>
+
+<h2 data-num="08">There Are No Dumb Questions</h2>
+
+<div class="qa-item">
+<div class="qa-q">Why does `width: auto` stop at exactly 0.0 instead of trying to compute something more sensible?</div>
+<div class="qa-a">Because "something more sensible" genuinely requires information this module doesn't have — the size of the containing block, which only exists once you're walking the actual layout tree. Guessing here would mean this module either silently produces wrong numbers or duplicates logic Module 11 needs to own anyway. Stopping at a clearly-flagged placeholder value, tested explicitly, is more honest than a plausible-looking wrong answer.</div>
+</div>
+
+<div class="qa-item">
+<div class="qa-q">Is treating border-width as one uniform value a big limitation?</div>
+<div class="qa-a">For this course's own test pages, no — but it's real, and DECISIONS.md names it rather than hiding it. If a later module needed independent border widths per side, `_edges()` already has the exact right shape (it's what padding and margin already use) — border would just need to stop using the `uniform_key` shortcut.</div>
+</div>
+
+<div class="qa-item">
+<div class="qa-q">Why compute `border_box_width` as `padding_box_width + border.horizontal` instead of directly from `content_width`?</div>
+<div class="qa-a">Because that's not how the box model is actually defined — each layer is defined in terms of the layer immediately inside it, never by skipping straight to content. Writing the code the same way keeps the code's structure a direct, checkable translation of the box model diagram, rather than an equivalent-but-differently-organized formula that happens to produce the same number.</div>
+</div>
+
+<h2 data-num="09">What's Next</h2>
+<p>Every box now has a correct SIZE. None of them have a POSITION yet —
+box_model.py never once mentions x or y. Module 11 walks the actual DOM
+tree and, box by box, computes where each one sits on the page —
+including finally resolving the <code>width: auto</code> case this
+module deliberately left alone.</p>
+
+<div class="module-nav">
+  <a href="../09_cascade/tutorial.html"><span class="dir">← Previous</span>Module 9: The Cascade</a>
+  <a class="next" href="../11_block_inline_layout/tutorial.html"><span class="dir">Next →</span>Module 11: Block &amp; Inline Layout</a>
+</div>
+
+</body>
+</html>
