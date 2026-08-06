@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Prereq: Trees &amp; Recursion | Build a Browser From Scratch</title>
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body style="--accent:#a78bfa; --accent-soft:rgba(167,139,250,0.12);">
+
+<div class="course-header">
+  <span class="module-badge">PREREQUISITE</span>
+  <span class="track-tag">Underlies Modules 6, 7, 10–13, 18</span>
+  <h1>Trees &amp; <span class="accent">Recursive Traversal</span></h1>
+  <p class="subtitle">A webpage isn't a list. It's boxes inside boxes inside boxes — and the only sane way to process that shape is a function that calls itself.</p>
+</div>
+
+<div class="callout callout-analogy">
+<div class="callout-label">🍽️ The Restaurant</div>
+<p>A ticket for "Table 5" isn't one flat line — it's a table, which has
+seats, which each have an order, which each have modifications
+("no onions"). To read the whole ticket you don't read it top to bottom
+like a list; you handle "Table 5," and for each seat under it you handle
+that seat the exact same way you handled the table — by looking at what's
+nested inside it.</p>
+</div>
+
+<h2 data-num="">The Core Idea</h2>
+<p>A <strong>tree</strong> is a data structure where each item (a "node")
+can have zero or more children, each of which can have their own
+children, and so on — with exactly one node (the "root") that has no
+parent. HTML is naturally tree-shaped: a <code>&lt;div&gt;</code> contains
+a <code>&lt;p&gt;</code> which contains text and a <code>&lt;span&gt;</code>,
+and so on, arbitrarily deep.</p>
+<p><strong>Recursion</strong> is the natural way to process a tree: write
+a function that handles one node, and for each of that node's children,
+calls <em>itself</em> on that child. You never need to know how deep the
+tree goes in advance — the function keeps calling itself deeper until it
+hits a node with no children (the "base case"), then returns back up.</p>
+
+<h3>A Worked Example</h3>
+<p>Given this tiny tree:</p>
+<pre><code>&lt;div&gt;
+  &lt;p&gt;Hello&lt;/p&gt;
+  &lt;p&gt;World&lt;/p&gt;
+&lt;/div&gt;</code></pre>
+<p>a recursive "print every tag name, indented by depth" function looks
+like:</p>
+<pre><code class="language-python">def print_tree(node, depth=0):
+    print("  " * depth + node.tag)
+    for child in node.children:
+        print_tree(child, depth + 1)   # <- calls itself</code></pre>
+<p>This exact pattern — visit a node, recurse into its children — is how
+Module 6 walks the DOM, how Module 9 resolves inherited CSS properties
+down a tree, and how Modules 11–13 compute each box's position relative
+to its parent's position.</p>
+
+<h2 data-num="">Where This Shows Up In The Course</h2>
+<ul>
+<li><strong>Module 6</strong> — the DOM itself is the tree; building it means correctly nesting tokens as parents/children.</li>
+<li><strong>Module 7</strong> — nested selectors and rule blocks parse into a small tree before flattening to a rule list.</li>
+<li><strong>Modules 10–13</strong> — layout is recursive by nature: a container's size can depend on its children's sizes, and a child's position depends on its parent's position.</li>
+<li><strong>Module 18</strong> — parsed JS code becomes an Abstract Syntax Tree (AST); the interpreter evaluates it the same recursive way.</li>
+</ul>
+
+<div class="callout callout-brain">
+<div class="callout-label">🧠 Quick check</div>
+<details>
+<summary>What stops a recursive tree-walking function from running forever?</summary>
+<p>The <strong>base case</strong> — a node with no children simply doesn't
+recurse further, so the function returns instead of calling itself again.
+A tree by definition has no cycles (a node can never be its own ancestor),
+so as long as you only ever recurse into <em>children</em>, the recursion
+is guaranteed to terminate. (Real HTML parsers do have to defend against
+malformed input that tries to create a cycle — that's part of what Module
+6's "recovering from malformed HTML" logic guards against.)</p>
+</details>
+</div>
+
+<p><a href="../prerequisites.html">← Back to Prerequisites index</a></p>
+
+</body>
+</html>

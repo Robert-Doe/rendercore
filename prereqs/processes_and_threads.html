@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Prereq: Processes vs. Threads | Build a Browser From Scratch</title>
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body style="--accent:#a78bfa; --accent-soft:rgba(167,139,250,0.12);">
+
+<div class="course-header">
+  <span class="module-badge">PREREQUISITE</span>
+  <span class="track-tag">Underlies Modules 24, 25</span>
+  <h1>Processes <span class="accent">vs. Threads</span></h1>
+  <p class="subtitle">A process is a locked room with its own memory. A thread is one of several workers inside the same room, sharing everything in it.</p>
+</div>
+
+<div class="callout callout-analogy">
+<div class="callout-label">🍽️ The Restaurant</div>
+<p>Two line cooks working the same station share the same ingredients,
+the same cutting board, the same pans — if one of them contaminates
+something, the other one is instantly affected too, because there was
+never a wall between them. Two separate food trucks parked next to each
+other share nothing — no ingredients, no equipment — and a fire in one
+truck cannot spread into the other, because there's an actual wall (two
+separate vehicles) between them.</p>
+</div>
+
+<h2 data-num="">The Core Idea</h2>
+<p>A <strong>process</strong> is a running program with its own private
+memory space, enforced by the operating system — one process literally
+cannot read or write another process's memory without going through an
+OS-mediated channel (like a pipe or socket) that both sides explicitly
+set up. If a process crashes, only its own memory and work are lost.</p>
+<p>A <strong>thread</strong> is a separate execution path <em>within</em>
+a single process, sharing that process's memory completely with every
+other thread in it. Threads are cheaper to create and communicate
+trivially (just read/write the same variables) — but a crash in one
+thread (or memory corruption it causes) can take down the whole process,
+because there's no OS-enforced wall between threads in the same process.</p>
+<p>The tradeoff this course cares about: <strong>isolation costs
+convenience</strong>. Processes are safer to crash and harder to sandbox
+around; threads are faster to coordinate but share fate completely.</p>
+
+<h3>A Worked Example</h3>
+<pre><code class="language-python">import multiprocessing
+
+def render_tab(url):
+    ... # if this crashes, only this process dies
+
+p = multiprocessing.Process(target=render_tab, args=("https://example.com",))
+p.start()   # a genuinely separate OS process, own memory space
+p.join()</code></pre>
+<p>Compare to Python's <code>threading.Thread</code>, which would run
+<code>render_tab</code> in the *same* process — sharing memory with
+everything else, including whatever created it. Module 24 deliberately
+uses <code>multiprocessing</code>, not <code>threading</code>, because
+tab isolation specifically requires the OS-enforced memory wall a thread
+doesn't have.</p>
+
+<h2 data-num="">Where This Shows Up In The Course</h2>
+<ul>
+<li><strong>Module 24</strong> — each tab is its own OS process specifically so one tab's crash can't corrupt another tab's memory.</li>
+<li><strong>Module 25</strong> — the sandbox broker/target split only means anything because a process boundary is a real, OS-enforced wall — a policy check inside a shared-memory thread could be bypassed by any code with access to that memory; a policy check enforced by a *separate process* cannot be bypassed just by having a bug in the other process.</li>
+</ul>
+
+<div class="callout callout-brain">
+<div class="callout-label">🧠 Quick check</div>
+<details>
+<summary>Why does the sandbox broker in Module 25 have to be a separate process, not just a separate function called from inside the renderer's own code?</summary>
+<p>Because if the "policy check" were just a function living inside the
+same process as the untrusted renderer logic, a bug (or malicious code) in
+that renderer could corrupt memory and simply skip the function, or
+overwrite its logic entirely — there'd be no OS-enforced wall stopping it.
+Putting the policy check in a genuinely separate process means the
+renderer physically cannot touch the broker's memory or code at all — the
+only way to reach it is through the narrow, explicit communication
+channel (a pipe) that the broker controls on its own terms.</p>
+</details>
+</div>
+
+<p><a href="../prerequisites.html">← Back to Prerequisites index</a></p>
+
+</body>
+</html>

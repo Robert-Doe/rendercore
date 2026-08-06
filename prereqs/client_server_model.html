@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Prereq: The Client–Server Model | Build a Browser From Scratch</title>
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body style="--accent:#a78bfa; --accent-soft:rgba(167,139,250,0.12);">
+
+<div class="course-header">
+  <span class="module-badge">PREREQUISITE</span>
+  <span class="track-tag">Underlies Modules 1, 3, 4, 21</span>
+  <h1>The <span class="accent">Client–Server</span> Model</h1>
+  <p class="subtitle">One side always speaks first, the other side always waits to be spoken to — and neither side can safely assume anything the other side didn't explicitly say.</p>
+</div>
+
+<div class="callout callout-analogy">
+<div class="callout-label">🍽️ The Restaurant</div>
+<p>The customer (client) never walks into the kitchen and starts cooking.
+They speak one order to the runner and then wait. The kitchen (server)
+never sends food to a table that didn't order — it only ever responds to
+a request it received. The whole relationship is asymmetric on purpose.</p>
+</div>
+
+<h2 data-num="">The Core Idea</h2>
+<p>A browser is a <strong>client</strong>. It always initiates: it opens
+the connection, sends the request, and then waits. A web server is
+oblivious to your browser's existence until a request arrives on a port
+it's listening on. This isn't a technical accident — it's the entire shape
+of the protocol: <strong>one request, one response, connection can close</strong>.
+Every module that talks over the network in this course (1, 3, 4) is
+implementing exactly one side of that shape: the client side.</p>
+<p>Critically: a response is not guaranteed to arrive, arrive complete, or
+arrive quickly. A well-built client never assumes the server behaved —
+it reads exactly what came back, checks it, and handles the case where it
+didn't.</p>
+
+<h3>A Worked Example</h3>
+<p>Every HTTP exchange in this course has the same two-message shape:</p>
+<pre><code>CLIENT -> SERVER
+GET /index.html HTTP/1.1
+Host: example.com
+
+SERVER -> CLIENT
+HTTP/1.1 200 OK
+Content-Type: text/html
+Content-Length: 137
+
+&lt;html&gt;...&lt;/html&gt;</code></pre>
+<p>Notice the client's message ends with a blank line and stops — it does
+not keep talking. The server reads that as "the request is complete," does
+its work, and sends back exactly one response. Module 3 builds both
+directions of this by hand.</p>
+
+<h2 data-num="">Where This Shows Up In The Course</h2>
+<ul>
+<li><strong>Module 1</strong> — opens the connection the client side initiates.</li>
+<li><strong>Module 3</strong> — formats the request (client → server) and parses the response (server → client), never the reverse.</li>
+<li><strong>Module 4</strong> — proves the same request/response shape works unmodified once wrapped in TLS.</li>
+<li><strong>Module 21</strong> — the chrome UI is what decides <em>when</em> to start a new request/response cycle (typing a URL, clicking a link, pressing back).</li>
+</ul>
+
+<div class="callout callout-brain">
+<div class="callout-label">🧠 Quick check</div>
+<details>
+<summary>Why can't a server just "push" a page update to your browser whenever it wants, in this model?</summary>
+<p>Because the server never initiates — it can only respond to a request
+it already received. This is precisely why real-time features (chat, live
+scores) need extra mechanisms layered on top (long-polling, WebSockets,
+Server-Sent Events) that this course doesn't build — they exist specifically
+to work around the one-request-one-response limit of the base model.</p>
+</details>
+</div>
+
+<p><a href="../prerequisites.html">← Back to Prerequisites index</a></p>
+
+</body>
+</html>

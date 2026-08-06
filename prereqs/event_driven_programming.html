@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Prereq: Event-Driven Programming | Build a Browser From Scratch</title>
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body style="--accent:#a78bfa; --accent-soft:rgba(167,139,250,0.12);">
+
+<div class="course-header">
+  <span class="module-badge">PREREQUISITE</span>
+  <span class="track-tag">Underlies Modules 17, 19, 20</span>
+  <h1>Event-Driven <span class="accent">Programming</span></h1>
+  <p class="subtitle">A browser doesn't run top-to-bottom and stop. It sits idle, waiting for something to happen, then runs a small piece of code in response — forever.</p>
+</div>
+
+<div class="callout callout-analogy">
+<div class="callout-label">🍽️ The Restaurant</div>
+<p>The head waiter doesn't stand at table 5 executing a fixed script from
+a card. They wait, doing nothing, until <em>something happens</em> — a
+hand raised, a call of "check please" — and only then do they run the one
+specific response that event calls for. Between events, they're not
+"paused" in the middle of some other task; they're simply waiting for the
+next one.</p>
+</div>
+
+<h2 data-num="">The Core Idea</h2>
+<p>In <strong>event-driven programming</strong>, you don't write "the"
+program as one top-to-bottom sequence. Instead, you register small
+functions — <strong>handlers</strong> — each tied to a specific kind of
+<strong>event</strong> ("when a click happens, run this"). The program
+then sits in a loop, waiting for events, and whenever one occurs, it runs
+the matching handler to completion, then goes back to waiting.</p>
+<p>The critical guarantee this depends on: <strong>one handler always runs
+to completion before the next one starts.</strong> Nothing interrupts a
+handler partway through. This is what makes it safe for a handler to
+freely read and modify shared state (like the DOM) without worrying that
+another handler is doing the same thing at the exact same instant.</p>
+
+<h3>A Worked Example</h3>
+<pre><code class="language-python">handlers = {"click": on_click, "keydown": on_keydown}
+
+while True:                      # the event loop
+    event = wait_for_next_event()      # blocks until something happens
+    handler = handlers[event.type]
+    handler(event)                     # runs fully before the loop continues</code></pre>
+<p>Nothing else runs while <code>handler(event)</code> is executing — not
+another handler, not a re-render. That's not a limitation; it's the whole
+point. Module 17 builds exactly this loop; Module 20 is what makes sure a
+handler that mutates the DOM leaves the render pipeline in a state it can
+correctly resume from once the handler returns.</p>
+
+<h2 data-num="">Where This Shows Up In The Course</h2>
+<ul>
+<li><strong>Module 17</strong> — builds the loop itself: wait, dispatch, run to completion, repeat.</li>
+<li><strong>Module 19</strong> — script registers handlers (e.g. <code>onclick</code>) through the DOM bindings; those handlers are what the loop calls.</li>
+<li><strong>Module 20</strong> — a handler that mutates the DOM mid-run is exactly the trigger the invalidation pipeline watches for.</li>
+</ul>
+
+<div class="callout callout-brain">
+<div class="callout-label">🧠 Quick check</div>
+<details>
+<summary>If a click handler runs an infinite loop by accident, what happens to the rest of the page?</summary>
+<p>Everything freezes — no other events get processed, no re-render
+happens, the whole tab appears hung — because the loop is waiting for
+that one handler to return, and it never will. This is the real, exact
+cause of the "page unresponsive" behavior you've seen in a real browser,
+and it's a direct, unavoidable consequence of the "one handler runs to
+completion" guarantee explained above: the same rule that makes DOM
+mutations safe is what makes a runaway handler catastrophic.</p>
+</details>
+</div>
+
+<p><a href="../prerequisites.html">← Back to Prerequisites index</a></p>
+
+</body>
+</html>

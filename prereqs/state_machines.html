@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Prereq: State Machines | Build a Browser From Scratch</title>
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body style="--accent:#a78bfa; --accent-soft:rgba(167,139,250,0.12);">
+
+<div class="course-header">
+  <span class="module-badge">PREREQUISITE</span>
+  <span class="track-tag">Underlies Modules 5, 7, 17, 18</span>
+  <h1>State <span class="accent">Machines</span></h1>
+  <p class="subtitle">A tokenizer doesn't "understand" text. It's a very small number of moods, and a strict rule for which mood comes next given the next character.</p>
+</div>
+
+<div class="callout callout-analogy">
+<div class="callout-label">🍽️ The Restaurant</div>
+<p>A waiter taking a spoken order is always in exactly one "mode": either
+<em>listening for a dish name</em>, or — the moment they hear the word
+"no" — <em>listening for what to remove</em>. Hearing "onions" means
+something completely different depending on which mode the waiter is
+currently in. The waiter never needs to remember the whole conversation —
+just which mode they're in right now, and what the next word does to
+that mode.</p>
+</div>
+
+<h2 data-num="">The Core Idea</h2>
+<p>A <strong>state machine</strong> is a system that is always in exactly
+one named <strong>state</strong> out of a small, fixed set, and has
+explicit rules for which state comes next given the current state and the
+next input. Crucially, it has no memory beyond "which state am I in" —
+it doesn't need to remember everything it's already seen.</p>
+<p>This is exactly how a real tokenizer works. An HTML tokenizer reading
+character by character is, at any instant, in a state like
+<code>TEXT</code>, <code>TAG_OPEN</code>, or <code>ATTRIBUTE_NAME</code>.
+Seeing the character <code>&lt;</code> while in <code>TEXT</code> means
+"finish the text token, switch to <code>TAG_OPEN</code>." Seeing that same
+character while already inside a tag means something else entirely. The
+state is what gives the same character a different meaning depending on
+context.</p>
+
+<h3>A Worked Example</h3>
+<p>A tiny state machine for recognizing the text <code>&lt;p&gt;</code>:</p>
+<pre><code>STATE: TEXT
+  see '&lt;'      -> emit any buffered text, go to STATE: TAG_OPEN
+  see anything  -> buffer the character, stay in STATE: TEXT
+
+STATE: TAG_OPEN
+  see a letter  -> start buffering a tag name, go to STATE: TAG_NAME
+  see '/'       -> this is a closing tag, go to STATE: TAG_NAME (closing)
+
+STATE: TAG_NAME
+  see '&gt;'      -> emit the completed tag token, go to STATE: TEXT
+  see anything  -> keep buffering the tag name, stay in STATE: TAG_NAME</code></pre>
+<p>Module 5 builds exactly this, at full size, for real HTML — dozens of
+states, but each one just as small and explicit as the three above.</p>
+
+<h2 data-num="">Where This Shows Up In The Course</h2>
+<ul>
+<li><strong>Module 5</strong> — the HTML tokenizer is a state machine over characters.</li>
+<li><strong>Module 7</strong> — the CSS tokenizer is a smaller, differently-shaped state machine.</li>
+<li><strong>Module 18</strong> — the JS tokenizer is a third, independent state machine (numbers, strings, identifiers, operators each need their own states).</li>
+<li><strong>Module 17</strong> — the event loop is itself a coarse state machine: idle, running a task, or processing a render — never more than one at once.</li>
+</ul>
+
+<div class="callout callout-brain">
+<div class="callout-label">🧠 Quick check</div>
+<details>
+<summary>Why can't a tokenizer just use one big regular expression instead of a state machine?</summary>
+<p>Some simple tokenizers can, for simple enough grammars. But HTML has
+constructs (like comments, or attribute values that may or may not be
+quoted, or script/style tags whose contents shouldn't be tokenized as HTML
+at all) where "what counts as the end of this token" depends entirely on
+what came before it — exactly the kind of context a single regex can't
+carry, but an explicit state does. This is also why real specs (the WHATWG
+HTML tokenization algorithm) are written <em>as</em> a state machine, not
+as a grammar of regular expressions.</p>
+</details>
+</div>
+
+<p><a href="../prerequisites.html">← Back to Prerequisites index</a></p>
+
+</body>
+</html>

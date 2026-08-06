@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Prereq: Origins &amp; the Security Boundary | Build a Browser From Scratch</title>
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body style="--accent:#a78bfa; --accent-soft:rgba(167,139,250,0.12);">
+
+<div class="course-header">
+  <span class="module-badge">PREREQUISITE</span>
+  <span class="track-tag">Underlies Modules 22, 23, 25</span>
+  <h1>Origins &amp; <span class="accent">the Security Boundary</span></h1>
+  <p class="subtitle">The entire unit of trust on the web is not "the page" and not "the server" — it's a specific triple of scheme, host, and port, called an origin.</p>
+</div>
+
+<div class="callout callout-analogy">
+<div class="callout-label">🍽️ The Restaurant</div>
+<p>Every table gets its own private bill. A waiter serving table 5 is not
+allowed to walk over and read table 9's bill, add items to it, or hand
+table 9's receipt to table 5's customer — even though it's the same
+restaurant, the same waiter pool, the same kitchen. "Which table" is the
+boundary; nothing about being in the same building crosses it.</p>
+</div>
+
+<h2 data-num="">The Core Idea</h2>
+<p>An <strong>origin</strong> is the exact combination of:</p>
+<pre><code>scheme://host:port
+https://example.com:443</code></pre>
+<p>Two URLs are the <strong>same origin</strong> only if all three parts
+match exactly. <code>https://example.com</code> and
+<code>http://example.com</code> are <em>different</em> origins (different
+scheme). <code>https://example.com</code> and
+<code>https://api.example.com</code> are different origins (different
+host, even though it "looks like" the same site). This is deliberately
+strict — the whole point is that a script or stored data from one origin
+should never be silently accessible to another, even a very similar-looking
+one.</p>
+<p>The <strong>same-origin policy</strong> is the rule, enforced by the
+browser, that script running in the context of one origin cannot read
+DOM content, cookies, or storage belonging to a different origin — even
+if both are open in tabs side by side, at the same instant, in the same
+browser.</p>
+
+<h3>A Worked Example</h3>
+<table>
+<tr><th>URL A</th><th>URL B</th><th>Same origin?</th></tr>
+<tr><td>https://example.com/page1</td><td>https://example.com/page2</td><td>Yes — path doesn't matter</td></tr>
+<tr><td>https://example.com</td><td>http://example.com</td><td>No — scheme differs</td></tr>
+<tr><td>https://example.com</td><td>https://shop.example.com</td><td>No — host differs</td></tr>
+<tr><td>https://example.com:443</td><td>https://example.com:8443</td><td>No — port differs</td></tr>
+</table>
+
+<h2 data-num="">Where This Shows Up In The Course</h2>
+<ul>
+<li><strong>Module 22</strong> — cookies are stored and sent back scoped to the origin (roughly — cookies actually scope slightly looser, by host, which the module calls out explicitly) that set them.</li>
+<li><strong>Module 23</strong> — builds the actual enforcement: a script's requests to read another origin's DOM/storage are checked against this exact rule and denied.</li>
+<li><strong>Module 25</strong> — the sandbox broker's policy checks are, in part, origin-aware: what a renderer is allowed to do can depend on which origin it's currently rendering.</li>
+</ul>
+
+<div class="callout callout-brain">
+<div class="callout-label">🧠 Quick check</div>
+<details>
+<summary>Why does changing only the port number (443 vs 8443) count as a different origin, when it's clearly "the same server"?</summary>
+<p>Because same-origin policy isn't reasoning about which physical server
+is involved — it's a strict, mechanical, three-part match designed to be
+impossible to fool with edge cases. If "looks like the same server" were
+the rule, an attacker could deliberately stand up a look-alike service on
+a different port and argue it should be trusted with the real origin's
+cookies and DOM access. Making the match exact and mechanical (scheme +
+host + port, nothing inferred) removes that judgment call entirely.</p>
+</details>
+</div>
+
+<p><a href="../prerequisites.html">← Back to Prerequisites index</a></p>
+
+</body>
+</html>

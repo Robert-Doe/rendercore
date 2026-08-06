@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Prereq: Coordinate Systems &amp; the Box Idea | Build a Browser From Scratch</title>
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body style="--accent:#a78bfa; --accent-soft:rgba(167,139,250,0.12);">
+
+<div class="course-header">
+  <span class="module-badge">PREREQUISITE</span>
+  <span class="track-tag">Underlies Modules 10–14</span>
+  <h1>Coordinate Systems &amp; <span class="accent">the Box Idea</span></h1>
+  <p class="subtitle">Every element on a page is a rectangle at a specific position. "Position" always means relative to something — never floating in the void.</p>
+</div>
+
+<div class="callout callout-analogy">
+<div class="callout-label">🍽️ The Restaurant</div>
+<p>"Put the garnish 2 inches from the left" only means something once you
+say <em>left of what</em> — the plate? the table? the whole dining room?
+Every plating instruction in a real kitchen is relative to a specific
+reference frame, and a garnish 2 inches from the plate's edge lands
+somewhere completely different depending on where the plate itself sits
+on the table.</p>
+</div>
+
+<h2 data-num="">The Core Idea</h2>
+<p>Screens use a coordinate system where <strong>(0, 0) is the top-left
+corner</strong>, x increases rightward, and — unlike math class —
+<strong>y increases downward</strong>. Every element's position is a pair
+of numbers in this system, but almost never stated in absolute
+screen terms — it's computed relative to its <strong>parent's</strong> box.
+A child positioned at "10px from its parent's left edge" lands in a
+different absolute screen spot depending on where the parent itself
+landed — which is why layout has to work top-down: you cannot place a
+child correctly until you know where its parent's box begins.</p>
+<p>Every element is treated as a rectangle — even irregularly-shaped
+content like wrapped text ends up inside an invisible bounding rectangle.
+That single simplification (everything is a box) is what makes the box
+model (Module 10) possible at all.</p>
+
+<h3>A Worked Example</h3>
+<pre><code>parent box:  x=50, y=50, width=300, height=200
+
+child box (declared as "10px from parent's left/top, 100x40"):
+  absolute x = parent.x + 10 = 60
+  absolute y = parent.y + 10 = 60
+  width = 100, height = 40</code></pre>
+<p>Notice the child's own numbers (10, 10, 100, 40) never change — but its
+absolute position on screen depends entirely on where the parent box was
+placed. Move the parent, and every descendant moves with it without their
+own numbers changing at all. This is exactly the mechanism Modules 11–13
+implement.</p>
+
+<h2 data-num="">Where This Shows Up In The Course</h2>
+<ul>
+<li><strong>Module 10</strong> — defines what a "box" even consists of (content, padding, border, margin) before any positioning happens.</li>
+<li><strong>Modules 11–13</strong> — compute each box's position relative to its parent, recursively, top of the tree down.</li>
+<li><strong>Module 14</strong> — the display list stores absolute, already-resolved coordinates — by paint time, "relative to what" has already been fully resolved.</li>
+</ul>
+
+<div class="callout callout-brain">
+<div class="callout-label">🧠 Quick check</div>
+<details>
+<summary>Why does y increasing downward (instead of upward, like a math graph) matter for a course, not just a trivia fact?</summary>
+<p>Because every formula in Modules 11–13 that stacks elements vertically
+("place the next block below the previous one") means <em>adding</em> to
+y, not subtracting. Get the direction backwards and every element renders
+in the mirror-opposite vertical order from what the DOM specifies —a real,
+diagnosable bug class, not just a coordinate curiosity.</p>
+</details>
+</div>
+
+<p><a href="../prerequisites.html">← Back to Prerequisites index</a></p>
+
+</body>
+</html>
