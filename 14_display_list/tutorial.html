@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Module 14 — Paint / Display List | Build a Browser From Scratch</title>
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body style="--accent:#f472b6; --accent-soft:rgba(244,114,182,0.12);">
+
+<div class="course-header">
+  <span class="module-badge">MODULE 14</span>
+  <span class="track-tag">Track 1 · Phase 4: From Geometry to Pixels</span>
+  <h1>Paint <span class="accent">/ Display List</span></h1>
+  <p class="subtitle">By this point, every decision has already been made. This module just writes them down as a to-do list, in the order they need to happen.</p>
+</div>
+
+<span class="decisions-badge">📄 Companion doc: <a href="DECISIONS.md">DECISIONS.md</a> · Source: <a href="display_list.py">display_list.py</a></span>
+
+<h2 data-num="00">Prerequisites</h2>
+<div class="prereq-links">
+  <a class="prereq-tag" href="../prereqs/trees_and_recursion.html">Trees &amp; Recursive Traversal</a>
+  <a class="prereq-tag" href="../13_flexbox_stacking/tutorial.html">Module 13: Stacking &amp; a Flexbox Subset</a>
+</div>
+
+<h2 data-num="01">The Big Analogy</h2>
+<div class="callout callout-analogy">
+<div class="callout-label">🍽️ The Restaurant, continued</div>
+<p>Every dish is plated, every garnish is decided, every plate's position
+on the table is finalized. Now someone has to write the expo's plating
+checklist — a single, ordered list: "set the tablecloth, then the base
+plate for table 3, then table 3's sauce, then table 3's garnish, then
+move to table 5's base plate..." The person carrying out that checklist
+(Module 15) doesn't need to know anything about recipes or seating
+charts anymore — just: read the next line, do exactly that, move on.
+This module writes the checklist. It doesn't do any of the plating
+itself.</p>
+</div>
+
+<h2 data-num="02">What Happens, Step by Step</h2>
+<ol class="step-list">
+<li>For the current box: if it has a background color, emit one <code>DrawRect</code> command for its area.</li>
+<li>If it has a visible border, emit one <code>DrawBorder</code> command — AFTER the background, so the border visually sits on top of the fill.</li>
+<li>Sort this box's children into paint order using Module 13's <code>paint_order()</code> — reused directly, not reimplemented.</li>
+<li>For each child, in that order, recursively repeat this whole process and append its commands to the running list.</li>
+<li>Return one flat list — no nesting, no tree structure left in it at all.</li>
+</ol>
+
+<h2 data-num="03">A Map of the Flattening</h2>
+<div class="diagram-box">
+<div class="kv-diagram">
+  TREE (paint order already applied to children: B, A, C):
+
+    root (gray)
+     ├── B (z=-1, blue)
+     ├── A (z=0,  red)
+     └── C (z=0,  green)
+          └── D (border only, purple)
+
+  FLATTENED DISPLAY LIST:
+
+    [0] DrawRect  root  gray      <- parent's own command, always first
+    [1] DrawRect  B     blue      <- z=-1: painted before its z=0 siblings
+    [2] DrawRect  A     red       <- z=0, 1st in DOM among the z=0 group
+    [3] DrawRect  C     green     <- z=0, 2nd in DOM among the z=0 group
+    [4] DrawBorder D    purple    <- C's CHILD: only after C's own command
+</div>
+<p class="diagram-caption">the tree shape is gone by the end — only the sequence survives, and the sequence IS the correctness guarantee</p>
+</div>
+
+<h2 data-num="04">The Code, Explained</h2>
+
+<p>The reuse of Module 13 is the line worth lingering on — not because
+it's complex, but because it's a real design choice about NOT
+duplicating logic:</p>
+<div class="filename">display_list.py</div>
+<pre><code class="language-python">from flex_and_stacking import StackItem, paint_order   # Module 13, unmodified
+
+stack_items = [StackItem(label=c.label, z_index=c.z_index, tree_order=i)
+               for i, c in enumerate(box.children)]
+ordered = paint_order(stack_items)</code></pre>
+
+<p>And the order that makes the whole thing correct — self, then
+children, always in that order:</p>
+<div class="filename">display_list.py</div>
+<pre><code class="language-python">if box.background:
+    items.append(DrawRect(...))          # 1. this box's own fill
+if box.border_color and box.border_width > 0:
+    items.append(DrawBorder(...))         # 2. this box's own border
+for stacked in ordered:
+    items.extend(build_display_list(child))   # 3. THEN children, recursively</code></pre>
+
+<h2 data-num="05">Limits / What You Cannot Do Yet</h2>
+<div class="compare-grid">
+  <div class="compare-col cant">
+    <h4>Can't do yet</h4>
+    <ul>
+      <li>Actually draw anything — these are still just data structures, no pixels exist yet</li>
+      <li>Text commands aren't wired in from Module 12 yet (structurally trivial, just not connected in this module's demo)</li>
+      <li>Real nested stacking contexts (inherits this gap directly from Module 13)</li>
+    </ul>
+  </div>
+  <div class="compare-col can">
+    <h4>Can do now</h4>
+    <ul>
+      <li>Flatten an arbitrarily nested tree into one correctly-ordered list</li>
+      <li>Correctly respect z-index reordering when flattening, not just DOM order</li>
+      <li>Correctly keep a box's own paint commands ahead of its children's</li>
+    </ul>
+  </div>
+</div>
+
+<h2 data-num="06">Run It</h2>
+<pre><code class="language-bash">cd 14_display_list
+python display_list.py</code></pre>
+<p>Exact output from a real run, unedited:</p>
+<pre><code>======================================================================
+Flattened display list, in paint order
+======================================================================
+  [0] DrawRect((0,0) 200x200, gray)
+  [1] DrawRect((10,10) 50x50, blue)
+  [2] DrawRect((0,0) 50x50, red)
+  [3] DrawRect((20,20) 50x50, green)
+  [4] DrawBorder((60,60) 20x20, purple, 3px)
+
+======================================================================
+Checks
+======================================================================
+root's own background is drawn FIRST, before any child: True
+B (z=-1) painted before A and C (z=0) despite being 2nd in DOM: True
+A painted before C — both z=0, DOM order (A then C) breaks the tie: True
+D's border command appears AFTER C's own background (children paint after their own parent's commands): True
+the whole thing is a FLAT list (5 items: 4 rects + 1 border), no nested structure: True</code></pre>
+
+<div class="callout callout-trouble">
+<div class="callout-label">⚠ Getting a blank or broken result?</div>
+<ul>
+<li><strong>A parent's background ends up AFTER its children in the list:</strong> check the background/border appends happen before the children loop, not after — this is the single most consequential ordering bug this module can have.</li>
+<li><strong>z-index seems ignored, children paint in plain DOM order:</strong> check `paint_order()` is actually being called on the children, and its RESULT (not the original `box.children` list) is what's iterated.</li>
+</ul>
+</div>
+
+<h2 data-num="07">Brain Exercise</h2>
+<div class="callout callout-brain">
+<div class="callout-label">🧠 Think before you reveal</div>
+<p><strong>Suppose, instead of appending a box's own commands before
+recursing into children, the code appended them AFTER. For the sample
+tree in this module, name one SPECIFIC visual bug this would cause once
+Module 15 actually draws it.</strong></p>
+<details>
+<summary>Reveal the answer</summary>
+<p>The root's gray 200×200 background would be drawn LAST, on top of
+every other rectangle already drawn — completely covering B, A, C, and
+D's border, since a later draw command paints over an earlier one at the
+same location. The page would render as one solid gray rectangle with
+nothing visible inside it, despite the display list containing all the
+correct commands with all the correct colors and positions — the DATA
+would be entirely correct, and the render would still be completely
+wrong, purely from ordering. This is exactly why Module 14's "what we
+proved" doesn't stop at "the right commands exist" — it specifically
+checks the ORDER they exist in.</p>
+</details>
+</div>
+
+<h2 data-num="08">There Are No Dumb Questions</h2>
+
+<div class="qa-item">
+<div class="qa-q">Why is reusing Module 13's `paint_order()` presented as a notable decision instead of just... obviously the right thing to do?</div>
+<div class="qa-a">Because "obviously right" and "actually done" aren't the same thing in real codebases — it would have been just as easy, and arguably faster in the moment, to write a second sort inline here. The DECISIONS.md entry exists to make the cost of NOT reusing it explicit: two copies of the same logic that can silently diverge the next time either one gets modified.</div>
+</div>
+
+<div class="qa-item">
+<div class="qa-q">Is a display list basically the same idea as a call stack or an execution trace?</div>
+<div class="qa-a">There's a real family resemblance — both are a linear sequence recording something that was structurally nested. But a display list is DATA, inspectable and replayable as many times as needed (Module 15 will replay it once; a real browser might replay a cached one many times without recomputing layout), where a call stack is a runtime mechanism, not a persisted artifact you hand to something else.</div>
+</div>
+
+<div class="qa-item">
+<div class="qa-q">Why does `DrawBorder` need its own command type instead of just being another `DrawRect`?</div>
+<div class="qa-a">Because they mean different things to whatever executes them: a filled rectangle versus an unfilled, stroked outline. Module 15's rasterizer will call a different Tkinter drawing method for each — collapsing them into one command type would just push the "which kind of drawing is this" decision to a later, less structured place.</div>
+</div>
+
+<h2 data-num="09">What's Next</h2>
+<p>A flat, correctly-ordered list of draw commands now exists — but it's
+still just Python objects sitting in memory. Module 15 replays this exact
+list against a real Tkinter canvas, and for the first time in this
+course, actual pixels appear on an actual screen.</p>
+
+<div class="module-nav">
+  <a href="../13_flexbox_stacking/tutorial.html"><span class="dir">← Previous</span>Module 13: Stacking &amp; a Flexbox Subset</a>
+  <a class="next" href="../15_rasterizer/tutorial.html"><span class="dir">Next →</span>Module 15: Rasterization to Canvas</a>
+</div>
+
+</body>
+</html>
