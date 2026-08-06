@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Module 24 — Multi-Process Tab Isolation | Build a Browser From Scratch</title>
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body style="--accent:#86198f; --accent-soft:rgba(134,25,143,0.16);">
+
+<div class="course-header">
+  <span class="module-badge">MODULE 24</span>
+  <span class="track-tag">Track 2 · The Browser Application</span>
+  <h1>Multi-Process <span class="accent">Tab Isolation</span></h1>
+  <p class="subtitle">Module 23 built a logical wall. This module builds a physical one — the kind a bug can't accidentally think its way through.</p>
+</div>
+
+<span class="decisions-badge">📄 Companion doc: <a href="DECISIONS.md">DECISIONS.md</a> · Source: <a href="process_isolation.py">process_isolation.py</a></span>
+
+<h2 data-num="00">Prerequisites</h2>
+<div class="prereq-links">
+  <a class="prereq-tag" href="../prereqs/processes_and_threads.html">Processes vs. Threads</a>
+</div>
+
+<h2 data-num="01">The Big Analogy</h2>
+<div class="callout callout-analogy">
+<div class="callout-label">🍽️ The Restaurant, continued</div>
+<p>Each table's food truck (Module 0's analogy for a tab) is a physically
+separate vehicle, not a shared kitchen station with a piece of tape on
+the floor marking "table 5's area." If truck 5 catches fire, truck 9
+keeps cooking — not because anyone told the fire to stay put, but
+because there's an actual gap of open air between two separate vehicles
+that fire simply cannot cross on its own. That's the entire difference
+this module is about: a rule that says "don't cross this line" versus a
+line that's a physical wall.</p>
+</div>
+
+<h2 data-num="02">What Happens, Step by Step</h2>
+<ol class="step-list">
+<li>The main "chrome" process starts three worker processes — real, separate OS processes, one per tab — via <code>multiprocessing.Process</code>, not threads.</li>
+<li>Each worker reports its OWN process ID, observed from inside itself — proof, not assertion, that these are genuinely different processes.</li>
+<li>All three tabs are pinged. Two respond normally. One is configured to raise a real, unhandled exception instead — a simulated renderer crash.</li>
+<li>That process's exit code is checked: non-zero confirms it genuinely crashed, not that it quietly finished.</li>
+<li>The two surviving tabs are pinged AGAIN, after the crash — and respond with real answers from the exact same process IDs as before, proving they were never affected at all.</li>
+</ol>
+
+<h2 data-num="03">A Map of the Four Processes</h2>
+<div class="diagram-box">
+<div class="kv-diagram">
+  chrome (main, pid 12724)
+   ├── tab_a (pid 21564)  ── ping ──▶ "pong"
+   ├── tab_b (pid  7544)  ── ping ──▶ RuntimeError, unhandled
+   │                                   process exits with code 1
+   └── tab_c (pid 23760)  ── ping ──▶ "pong"
+
+  AFTER tab_b's crash:
+   chrome (pid 12724, unchanged, never stopped running)
+   ├── tab_a (pid 21564) ── ping AGAIN ──▶ "pong"  (same pid, fully alive)
+   └── tab_c (pid 23760) ── ping AGAIN ──▶ "pong"  (same pid, fully alive)
+
+  tab_b is simply GONE — not recovered, not relevant to a and c at all
+</div>
+<p class="diagram-caption">four separate boxes on the OS process table — one disappearing changes nothing about the other three</p>
+</div>
+
+<h2 data-num="04">The Code, Explained</h2>
+
+<p>The crash itself is deliberately unglamorous — a real, unhandled exception, exactly like a real bug would produce:</p>
+<div class="filename">process_isolation.py</div>
+<pre><code class="language-python">if should_crash:
+    result_queue.put((tab_id, "crashing", os.getpid()))
+    raise RuntimeError(f"simulated renderer crash in tab {tab_id!r}")</code></pre>
+
+<p>And the proof that matters most — not "is it alive," but "can it still do its job":</p>
+<div class="filename">process_isolation.py</div>
+<pre><code class="language-python">tabs["tab_a"]["cmd_queue"].put("ping")   # sent AFTER tab_b already crashed
+tab_id, status, pid = result_queue.get(timeout=10)
+# status == "pong", pid == tab_a's ORIGINAL pid</code></pre>
+
+<h2 data-num="05">Limits / What You Cannot Do Yet</h2>
+<div class="compare-grid">
+  <div class="compare-col cant">
+    <h4>Can't do yet</h4>
+    <ul>
+      <li>Automatically restart a crashed tab (real browsers show a "page crashed, reload?" state — not built here)</li>
+      <li>Constrain what a tab process is ALLOWED to do, even before it crashes (Module 25)</li>
+      <li>Real IPC beyond simple queues — no shared rendering surface handoff between processes</li>
+    </ul>
+  </div>
+  <div class="compare-col can">
+    <h4>Can do now</h4>
+    <ul>
+      <li>Run each tab as a genuinely separate, independently-verified OS process</li>
+      <li>Prove one tab's real, unhandled crash has zero effect on sibling tabs' continued operation</li>
+      <li>Distinguish "still exists" from "still actually works" in the isolation proof itself</li>
+    </ul>
+  </div>
+</div>
+
+<h2 data-num="06">Run It</h2>
+<pre><code class="language-bash">cd 24_process_isolation
+python process_isolation.py</code></pre>
+<p>Exact output from a real run, unedited (the traceback near the top is
+EXPECTED — it's the real crash, printed by Python from the crashing
+child process):</p>
+<pre><code>Process Process-2:
+Traceback (most recent call last):
+  ...
+RuntimeError: simulated renderer crash in tab 'tab_b'
+======================================================================
+Starting 3 tabs, each as a REAL separate OS process
+======================================================================
+  main (chrome) process pid: 12724
+  tab_a process pid: 21564
+  tab_b process pid: 7544
+  tab_c process pid: 23760
+
+all 4 pids are genuinely distinct: True
+
+======================================================================
+Pinging all 3 tabs — tab_b is configured to crash instead of responding
+======================================================================
+  responses: {'tab_a': 'pong', 'tab_b': 'crashing', 'tab_c': 'pong'}
+
+======================================================================
+AFTER the crash
+======================================================================
+  tab_b exit code (non-zero == it really crashed): 1
+  tab_a still alive: True
+  tab_c still alive: True
+  main (chrome) process pid, unchanged, still executing this very line: True
+
+======================================================================
+Proving tab_a and tab_c are not just 'alive' but genuinely still
+RESPONSIVE — pinging them again, AFTER tab_b's crash
+======================================================================
+  post-crash responses: {'tab_a': ('pong', 21564), 'tab_c': ('pong', 23760)}
+
+======================================================================
+Checks
+======================================================================
+all 4 processes (main + 3 tabs) had genuinely distinct pids: True
+tab_b actually crashed (non-zero exit code): True
+tab_a and tab_c survived tab_b's crash and later exited CLEANLY (exitcode 0, not a crash): tab_a=0, tab_c=0  -> True
+tab_a responded 'pong' to a SECOND ping issued AFTER tab_b crashed: True
+tab_c responded 'pong' to a SECOND ping issued AFTER tab_b crashed: True
+the pid tab_a responded with post-crash MATCHES its original pid (same process, not silently respawned): True</code></pre>
+
+<div class="callout callout-trouble">
+<div class="callout-label">⚠ Getting a blank or broken result?</div>
+<ul>
+<li><strong>Script hangs indefinitely:</strong> on some platforms, `multiprocessing` requires the module-level worker function and the `if __name__ == "__main__":` guard exactly as written — a worker defined as a nested function or lambda will fail to pickle/start correctly.</li>
+<li><strong>All 4 pids aren't distinct:</strong> this would indicate `threading.Thread` got used somewhere instead of `multiprocessing.Process` — threads share their parent's pid entirely.</li>
+</ul>
+</div>
+
+<h2 data-num="07">Brain Exercise</h2>
+<div class="callout callout-brain">
+<div class="callout-label">🧠 Think before you reveal</div>
+<p><strong>If this module used `threading.Thread` instead of
+`multiprocessing.Process` for the exact same test, what would actually
+happen when `tab_b`'s thread raised its unhandled `RuntimeError`? Would
+`tab_a` and `tab_c` still respond to a ping afterward?</strong></p>
+<details>
+<summary>Reveal the answer</summary>
+<p>An unhandled exception in a `threading.Thread`'s target function
+doesn't crash the whole process, and by default Python simply prints the
+traceback and lets that one thread quietly stop — so in THIS specific
+narrow scenario, `tab_a` and `tab_c` (different threads, still running)
+might well still respond, making the test LOOK like it passed. That's
+precisely what makes this comparison worth thinking through: the
+observable result in this one clean test case can look similar between
+threads and processes, which is exactly how "we use threads for tabs"
+mistakes survive code review — until a REAL crash (a genuine segfault, a
+native-code memory corruption bug, a stack overflow) hits, which in a
+threaded model can corrupt the WHOLE process's memory, taking every
+"isolated" thread down with it. `multiprocessing` closes that gap
+categorically, at the OS level, rather than only for the specific class
+of crash (a clean Python exception) this test happens to simulate.</p>
+</details>
+</div>
+
+<h2 data-num="08">There Are No Dumb Questions</h2>
+
+<div class="qa-item">
+<div class="qa-q">Is this really how Chromium/Firefox isolate tabs?</div>
+<div class="qa-a">The core mechanism — genuinely separate OS processes, one crash unable to directly corrupt another's memory — is real and matches how modern browsers work. Real browsers add real complexity on top: a shared "browser process" coordinates many "renderer processes," often with more than one tab per renderer process depending on site-isolation policy, plus separate processes for GPU work and network requests. This module's one-tab-per-process model is a simplified but structurally honest slice of that bigger picture.</div>
+</div>
+
+<div class="qa-item">
+<div class="qa-q">Why use `multiprocessing.Queue` instead of some other communication method?</div>
+<div class="qa-a">Because it's the standard, safe way to pass data between genuinely separate OS processes in Python — under the hood it handles the real OS-level pipe/socket plumbing and serialization (pickling) needed to get a Python object from one process's memory into another's, which is exactly the kind of "OS-mediated channel" prereqs/processes_and_threads.html describes as the only way separate processes can communicate at all.</div>
+</div>
+
+<div class="qa-item">
+<div class="qa-q">Does surviving a crash mean tab_a and tab_c are fully "safe" in every sense?</div>
+<div class="qa-a">No — this module proves memory-corruption/crash isolation specifically, which is real and valuable, but says nothing about what a tab's process is ALLOWED to do while it's running normally (read arbitrary files? make arbitrary network requests?). That's a completely different, equally important question — and it's exactly what Module 25 addresses next.</div>
+</div>
+
+<h2 data-num="09">What's Next</h2>
+<p>Process isolation stops a crash from spreading. It does nothing to
+stop a tab's process from doing something it shouldn't while it's
+perfectly healthy and running normally — reading a file it has no
+business reading, for instance. Module 25, this course's bonus module,
+builds the piece that constrains that: a policy-checked broker a
+renderer process must go through for anything privileged, instead of
+being trusted directly.</p>
+
+<div class="module-nav">
+  <a href="../23_same_origin_policy/tutorial.html"><span class="dir">← Previous</span>Module 23: Same-Origin Policy</a>
+  <a class="next" href="../25_sandboxing/tutorial.html"><span class="dir">Next →</span>Module 25 (Bonus): Sandboxing Deep Dive</a>
+</div>
+
+</body>
+</html>
