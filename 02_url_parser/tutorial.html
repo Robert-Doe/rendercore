@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Module 2 — URL Parser | Build a Browser From Scratch</title>
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body style="--accent:#60a5fa; --accent-soft:rgba(96,165,250,0.12);">
+
+<div class="course-header">
+  <span class="module-badge">MODULE 2</span>
+  <span class="track-tag">Track 1 · Phase 1: Bare Metal Foundation</span>
+  <h1>URL <span class="accent">Parser</span></h1>
+  <p class="subtitle">Before you can send the runner anywhere, you have to read the order slip and split it into the pieces that matter.</p>
+</div>
+
+<span class="decisions-badge">📄 Companion doc: <a href="DECISIONS.md">DECISIONS.md</a> · Source: <a href="url_parser.py">url_parser.py</a></span>
+
+<h2 data-num="00">Prerequisites</h2>
+<div class="prereq-links">
+  <a class="prereq-tag" href="../prereqs/origins_and_security_boundary.html">Origins &amp; the Security Boundary</a>
+</div>
+
+<h2 data-num="01">The Big Analogy</h2>
+<div class="callout callout-analogy">
+<div class="callout-label">🍽️ The Restaurant, continued</div>
+<p>Before the runner (Module 1) can be sent anywhere, someone at the host
+stand has to read the customer's request and split it into pieces: which
+<strong>warehouse</strong> to visit (the host), which
+<strong>loading dock number</strong> at that warehouse (the port), which
+specific <strong>crate</strong> to ask for (the path), any
+<strong>filtering instructions</strong> to hand the warehouse staff
+(the query — "only the ripe ones"), and a private note that only matters
+once the crate is already back on the table and is never spoken to the
+warehouse at all (the fragment — "open it at the garnish, not the
+entrée").</p>
+<p>Get any of the first four wrong and the runner goes to the wrong
+place, or asks for the wrong thing. Get the fragment wrong and nothing
+about the trip changes at all — it only affects what happens after the
+crate is already home.</p>
+</div>
+
+<h2 data-num="02">What Happens, Step by Step</h2>
+<ol class="step-list">
+<li>Strip off the <strong>fragment</strong> first (everything after the first <code>#</code>) — it can contain characters (<code>?</code>, <code>/</code>) that would otherwise be misread as part of the query or path.</li>
+<li>Find <code>"://"</code> to split off the <strong>scheme</strong> and confirm it's one this course supports (<code>http</code> or <code>https</code>).</li>
+<li>Take everything up to the next <code>/</code> or <code>?</code> as the <strong>authority</strong>, and split it on the last <code>:</code> into <strong>host</strong> and <strong>port</strong> (if a port is present).</li>
+<li>If no port was given, <strong>default it from the scheme</strong> — 80 for http, 443 for https.</li>
+<li>Split whatever's left on <code>?</code> into <strong>path</strong> and <strong>query</strong>.</li>
+<li>If the path came out empty, default it to <code>"/"</code> — HTTP defines a missing path as a request for the root.</li>
+</ol>
+
+<h2 data-num="03">A Map of a URL</h2>
+<div class="diagram-box">
+<div class="kv-diagram">
+https://example.com:8080/search?q=browsers&page=2#results
+\___/   \_________/ \__/ \_____/ \________________/ \_____/
+scheme     host      port  path          query        fragment
+       \_____________________/
+              authority
+
+  parse order:  1) strip fragment  2) split scheme  3) split authority
+                4) split host:port 5) split path/query 6) default path "/"
+</div>
+<p class="diagram-caption">left-to-right parsing order matches the grammar's own left-to-right structure</p>
+</div>
+
+<h2 data-num="04">The Code, Explained</h2>
+
+<p>The most important line in the whole module is the first real one —
+because getting the order wrong here breaks everything downstream:</p>
+<div class="filename">url_parser.py</div>
+<pre><code class="language-python">if "#" in rest:
+    rest, fragment = rest.split("#", 1)
+else:
+    fragment = ""</code></pre>
+<p>This runs <em>before</em> scheme, authority, or query are touched. A
+fragment like <code>#a?b</code> contains a literal <code>?</code> — if we
+split on <code>?</code> first, that character would get misread as the
+start of a query string that was never there. Stripping the fragment
+first removes that ambiguity structurally, rather than trying to detect
+it with a smarter regex later.</p>
+
+<p>The host/port split reuses a small but deliberate detail —
+<code>rsplit</code>, not <code>split</code>:</p>
+<div class="filename">url_parser.py</div>
+<pre><code class="language-python">if ":" in authority:
+    host, port_str = authority.rsplit(":", 1)</code></pre>
+<p><code>rsplit(":", 1)</code> splits from the <em>right</em>, at most
+once — so it correctly separates <code>example.com:8080</code> into
+<code>example.com</code> and <code>8080</code>. (This module doesn't
+support IPv6 literal hosts like <code>[::1]:8080</code>, which contain
+extra colons — see DECISIONS.md for why that's explicitly out of scope.)</p>
+
+<h2 data-num="05">Limits / What You Cannot Do Yet</h2>
+<div class="compare-grid">
+  <div class="compare-col cant">
+    <h4>Can't do yet</h4>
+    <ul>
+      <li>Parse IPv6 literal hosts (<code>[::1]</code>)</li>
+      <li>Parse userinfo (<code>user:pass@host</code>)</li>
+      <li>Resolve relative URLs with <code>..</code> segments</li>
+      <li>Handle schemes other than http/https</li>
+    </ul>
+  </div>
+  <div class="compare-col can">
+    <h4>Can do now</h4>
+    <ul>
+      <li>Parse any http/https URL into scheme/host/port/path/query/fragment</li>
+      <li>Correctly default missing ports and missing paths</li>
+      <li>Resolve a simple absolute-path relative reference against a base URL</li>
+      <li>Prove correctness against Python's own <code>urllib.parse</code>, used only as a test oracle</li>
+    </ul>
+  </div>
+</div>
+
+<h2 data-num="06">Run It</h2>
+<pre><code class="language-bash">cd 02_url_parser
+python url_parser.py</code></pre>
+<p>Exact output from a real run, unedited:</p>
+<pre><code>'https://example.com/index.html'
+  scheme='https' host='example.com' port=443 path='/index.html' query='' fragment=''
+  origin() = 'https://example.com:443'
+
+'http://example.com:8080/search?q=browsers&page=2'
+  scheme='http' host='example.com' port=8080 path='/search' query='q=browsers&page=2' fragment=''
+  origin() = 'http://example.com:8080'
+
+'https://example.com'
+  scheme='https' host='example.com' port=443 path='/' query='' fragment=''
+  origin() = 'https://example.com:443'
+
+'https://example.com/a/b/c#section-2'
+  scheme='https' host='example.com' port=443 path='/a/b/c' query='' fragment='section-2'
+  origin() = 'https://example.com:443'
+
+'https://example.com:443/'
+  scheme='https' host='example.com' port=443 path='/' query='' fragment=''
+  origin() = 'https://example.com:443'
+
+Cross-checking against urllib.parse.urlsplit (verification only)
+  'https://example.com/index.html': MATCH
+  'http://example.com:8080/search?q=browsers&page=2': MATCH
+  'https://example.com': MATCH
+  'https://example.com/a/b/c#section-2': MATCH
+  'https://example.com:443/': MATCH
+
+All samples matched urllib.parse: True</code></pre>
+
+<div class="callout callout-trouble">
+<div class="callout-label">⚠ Getting a blank or broken result?</div>
+<ul>
+<li><strong><code>ValueError: unsupported scheme</code>:</strong> you passed something other than http/https (e.g. <code>ftp://</code>) — this is a deliberate scope limit, not a bug (DECISIONS.md).</li>
+<li><strong><code>ValueError: relative URL given with no base</code>:</strong> a string with no <code>"://"</code> was parsed without a <code>base=</code> argument — pass the current page's URL as the base, the way a real browser resolves a link relative to the page it's on.</li>
+<li><strong>MISMATCH in the urllib cross-check:</strong> if you edit the parser and see this, trust `urllib` here — it's the reference implementation for this comparison.</li>
+</ul>
+</div>
+
+<h2 data-num="07">Brain Exercise</h2>
+<div class="callout callout-brain">
+<div class="callout-label">🧠 Think before you reveal</div>
+<p><strong>Consider the URL <code>https://example.com/faq#what-is-a-query?</code>. That
+fragment contains a literal <code>?</code> character. Does this parser
+incorrectly split off a query string from it? Why or why not?</strong></p>
+<details>
+<summary>Reveal the answer</summary>
+<p>No — and the reason is entirely step 1. <code>parse_url()</code> splits
+on the <em>first</em> <code>#</code> before it ever looks for a
+<code>?</code>. By the time the query-splitting code runs, the string
+being examined is just <code>https://example.com/faq</code> — the
+fragment (<code>what-is-a-query?</code>, <code>?</code> and all) has
+already been captured whole and set aside. If the code instead searched
+for <code>?</code> first, across the entire original string, it would
+incorrectly treat everything after that <code>?</code> as a query string
+and mistakenly shrink the fragment down to nothing. This is exactly why
+DECISIONS.md calls the fragment-first ordering "forced by the grammar,"
+not a style choice — reordering these two steps produces observably wrong
+output on inputs exactly like this one.</p>
+</details>
+</div>
+
+<h2 data-num="08">There Are No Dumb Questions</h2>
+
+<div class="qa-item">
+<div class="qa-q">Why does <code>URL</code> have an <code>origin()</code> method at all — isn't that just <code>scheme</code> + <code>host</code> + <code>port</code> pasted together?</div>
+<div class="qa-a">Mechanically, yes — but giving it a name matters. Module 23 (same-origin policy) will compare two URLs' origins constantly, and writing <code>url_a.origin() == url_b.origin()</code> makes the security-relevant comparison explicit in the code, instead of it being an easy-to-miss three-field comparison scattered everywhere it's needed.</div>
+</div>
+
+<div class="qa-item">
+<div class="qa-q">Why bother cross-checking against <code>urllib.parse</code> if the whole point is not using it?</div>
+<div class="qa-a">Those are two different things: not <em>using</em> urllib.parse to do the parsing (the deliverable stays from-scratch) versus <em>using it to check our work</em> after the fact. It never appears above the <code>if __name__ == "__main__":</code> line — see DECISIONS.md's last entry for exactly where the line is drawn.</div>
+</div>
+
+<div class="qa-item">
+<div class="qa-q">What happens if I pass a URL like <code>"about.html"</code> with no base?</div>
+<div class="qa-a">It raises <code>ValueError</code> immediately, rather than guessing. A relative reference is only meaningful in the context of "relative to what page," so this parser refuses to silently invent one. Later, when Module 6+ builds pages containing relative links, the current page's own URL is what gets passed as <code>base</code>.</div>
+</div>
+
+<div class="qa-item">
+<div class="qa-q">Why is an empty path turned into <code>"/"</code> instead of being left empty?</div>
+<div class="qa-a">Because Module 3 puts this exact string into the request line it sends to the server (e.g. <code>GET / HTTP/1.1</code>), and an empty request path isn't valid there — HTTP requires at least <code>/</code>. Defaulting it here means every later module can assume <code>path</code> is never an empty string.</div>
+</div>
+
+<h2 data-num="09">What's Next</h2>
+<p>Module 3 takes this module's <code>URL</code> object and Module 1's
+socket functions and combines them: formatting a spec-correct HTTP/1.1
+request line and headers from a <code>URL</code>, sending it, and — the
+harder half — correctly parsing a response without relying on the
+connection just closing.</p>
+
+<div class="module-nav">
+  <a href="../01_raw_socket/tutorial.html"><span class="dir">← Previous</span>Module 1: Raw TCP Socket Connection</a>
+  <a class="next" href="../03_http_from_scratch/tutorial.html"><span class="dir">Next →</span>Module 3: HTTP/1.1 From Scratch</a>
+</div>
+
+</body>
+</html>
