@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Module 9 — The Cascade | Build a Browser From Scratch</title>
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body style="--accent:#2dd4bf; --accent-soft:rgba(45,212,191,0.12);">
+
+<div class="course-header">
+  <span class="module-badge">MODULE 9</span>
+  <span class="track-tag">Track 1 · Phase 2: From Bytes to a Document Tree</span>
+  <h1>The <span class="accent">Cascade</span></h1>
+  <p class="subtitle">Three rules all claim to set the same color. Exactly one of them is allowed to win — and the rule for deciding which is completely deterministic.</p>
+</div>
+
+<span class="decisions-badge">📄 Companion doc: <a href="DECISIONS.md">DECISIONS.md</a> · Source: <a href="cascade.py">cascade.py</a></span>
+
+<h2 data-num="00">Prerequisites</h2>
+<div class="prereq-links">
+  <a class="prereq-tag" href="../08_selector_matching/tutorial.html">Module 8: Selector Matching Engine</a>
+</div>
+
+<h2 data-num="01">The Big Analogy</h2>
+<div class="callout callout-analogy">
+<div class="callout-label">🍽️ The Restaurant, continued</div>
+<p>Three different pages of the house style guide all claim to say what
+sauce goes on this dish: the general "all soups" page, the more specific
+"soups with a garnish" page, and a handwritten sticky note on today's
+ticket that says <em>"no, seriously, use the red sauce, I don't care what
+the book says."</em> The sticky note (<code>!important</code>) wins
+outright, no matter how official-looking the book pages are. Absent a
+sticky note, the more specific page (the one that had to know more about
+this exact dish to apply) wins over the general one. And if two pages are
+equally specific and disagree, the chef trusts whichever one was
+literally photocopied into the binder <em>last</em> — the most recently
+stated instruction, all else being equal.</p>
+</div>
+
+<h2 data-num="02">What Happens, Step by Step</h2>
+<ol class="step-list">
+<li>For a node, gather every declaration from every matching rule (Module 8), tagging each with the specificity of whichever selector in that rule actually matched, and the rule's position in the stylesheet.</li>
+<li>Group these candidate declarations by property name — <code>color</code>'s candidates are considered separately from <code>border</code>'s.</li>
+<li>For each property, split its candidates into two pools: <code>!important</code> ones and normal ones. If ANY important candidate exists, normal ones are ignored entirely for that property.</li>
+<li>Within the chosen pool, pick the candidate with the highest specificity. If there's a tie, pick whichever appeared LATER in the stylesheet.</li>
+<li>That's the node's own "specified" style. For any inheritable property (like <code>color</code>) still unset after that, copy the value down from the parent's already-computed style.</li>
+<li>For anything still unset, fall back to a hardcoded initial value.</li>
+</ol>
+
+<h2 data-num="03">A Map of One Property's Resolution</h2>
+<div class="diagram-box">
+<div class="kv-diagram">
+  property: color, candidates gathered from matching rules:
+
+    ( spec=(0,0,1), order=1, important=False, value="black"  )   <- from "p { color: black; }"
+    ( spec=(0,1,0), order=0, important=False, value="red"    )   <- from ".highlight { color: red; }"
+
+  STEP: any important candidates? No -> pool = both of the above
+
+  STEP: max by (specificity, order):
+        (0,1,0) > (0,0,1)  at the FIRST tuple position that differs
+        -> WINNER: value="red"   (class beat type, even though type came LATER)
+</div>
+<p class="diagram-caption">specificity is compared first; source order only breaks an exact tie</p>
+</div>
+
+<h2 data-num="04">The Code, Explained</h2>
+
+<p>The entire tie-breaking rule is one sort key:</p>
+<div class="filename">cascade.py</div>
+<pre><code class="language-python">important_cands = [c for c in cands if c[2]]
+pool = important_cands if important_cands else cands
+best = max(pool, key=lambda c: (c[0], c[1]))</code></pre>
+<p>Two separate ideas live in these three lines: importance is a
+<em>pool selection</em> (an all-or-nothing filter, decided before
+comparing anything else), while specificity-then-order is a single
+<em>sort key</em> where Python's tuple comparison does the "compare the
+first thing, only look at the second on a tie" work for free.</p>
+
+<p>Inheritance is a strict top-down walk, because a child can't inherit
+from a parent that hasn't been resolved yet:</p>
+<div class="filename">cascade.py</div>
+<pre><code class="language-python">def _walk(node, parent_style):
+    style = compute_style(node, rules, parent_style)
+    result[id(node)] = style
+    for child in node.children:
+        if isinstance(child, Element):
+            _walk(child, style)   # <- the CHILD call gets the PARENT's finished style</code></pre>
+
+<h2 data-num="05">Limits / What You Cannot Do Yet</h2>
+<div class="compare-grid">
+  <div class="compare-col cant">
+    <h4>Can't do yet</h4>
+    <ul>
+      <li>Full CSS inheritance/initial-value tables — only a small demo subset is defined</li>
+      <li>Any layout — computed styles exist, but nothing has a position or size yet</li>
+      <li>Shorthand properties (<code>margin: 10px 5px</code> expanding into four longhand values)</li>
+    </ul>
+  </div>
+  <div class="compare-col can">
+    <h4>Can do now</h4>
+    <ul>
+      <li>Resolve conflicting declarations by specificity, with correct source-order tie-breaking</li>
+      <li>Correctly let <code>!important</code> override even the highest specificity</li>
+      <li>Correctly inherit values down the tree, and correctly NOT leak non-inherited properties</li>
+      <li>Fall back to sensible defaults when nothing set a property at all</li>
+    </ul>
+  </div>
+</div>
+
+<h2 data-num="06">Run It</h2>
+<pre><code class="language-bash">cd 09_cascade
+python cascade.py</code></pre>
+<p>Exact output from a real run, unedited:</p>
+<pre><code>======================================================================
+Checks
+======================================================================
+CASE 1 — specificity beats source order: .highlight (class, spec 0,1,0) beats 'p' (type, spec 0,0,1) declared AFTER it -> color=red: True
+CASE 2 — equal specificity, source order tiebreak: .a then .b, both spec 0,1,0, LATER (.b) wins -> color=green: True
+CASE 3 — !important beats higher specificity: .override (spec 0,1,0, !important) beats #special (spec 1,0,0, not important) -> color=orange: True
+CASE 4a — inheritance: &lt;span&gt; has no color rule of its own, inherits parent's computed color=red: True
+CASE 4b — non-inherited property does NOT leak: &lt;span&gt; has no 'border' in its computed style even though its parent does: True
+CASE 5 — initial value fallback: plain &lt;p&gt; has no font-weight rule anywhere, falls back to initial 'normal': True</code></pre>
+
+<div class="callout callout-trouble">
+<div class="callout-label">⚠ Getting a blank or broken result?</div>
+<ul>
+<li><strong>Later-declared, lower-specificity rules always win:</strong> check the sort key is <code>(specificity, order)</code>, not just <code>order</code> alone.</li>
+<li><strong><code>!important</code> doesn't override a high-specificity id selector:</strong> confirm the important/normal split happens BEFORE the specificity comparison, as two separate pools — not as an extra point added to specificity.</li>
+<li><strong>Every child ends up with its parent's <code>border</code>, <code>padding</code>, etc.:</strong> check <code>INHERITED_PROPERTIES</code> — only specific properties should copy down; most shouldn't.</li>
+</ul>
+</div>
+
+<h2 data-num="07">Brain Exercise</h2>
+<div class="callout callout-brain">
+<div class="callout-label">🧠 Think before you reveal</div>
+<p><strong>Two rules both apply <code>!important</code> to the same
+property on the same element, with DIFFERENT specificities. Trace through
+<code>compute_style()</code>: does specificity end up mattering after
+all, in this specific scenario?</strong></p>
+<details>
+<summary>Reveal the answer</summary>
+<p>Yes — and this is worth sitting with, because it shows importance and
+specificity aren't actually in total opposition; importance is a
+<em>pool filter</em>, and specificity is the <em>tie-break within</em>
+whichever pool is active. If both candidates are important,
+<code>important_cands</code> contains both of them, and
+<code>pool = important_cands</code>. Then <code>max(pool, key=lambda c:
+(c[0], c[1]))</code> still compares their specificities against each
+other, exactly as it would for two normal declarations — specificity is
+never "turned off," it's just evaluated within a smaller, important-only
+pool once any important declaration exists for that property. So: among
+important declarations, specificity (then order) still decides. Among a
+mix of important and normal, importance alone decides regardless of
+specificity. Both statements are true at once, and the two-line pool
+selection followed by one sort key is what makes them both true from the
+same code.</p>
+</details>
+</div>
+
+<h2 data-num="08">There Are No Dumb Questions</h2>
+
+<div class="qa-item">
+<div class="qa-q">Why is `border` a bad example of an inherited property, but `color` a good one?</div>
+<div class="qa-a">This mirrors real CSS's actual design, not an arbitrary choice this module made: a border drawn around a `<div>` visually wrapping text inside it would look wrong if every nested `<span>` also drew its own border — borders are about a specific box, not about content in general. Text color, font, and text alignment are about how content reads, which naturally makes sense to flow down into nested content unless something more specific overrides it. The spec's inherited-property list generally follows this "is this about the box, or about the content" distinction.</div>
+</div>
+
+<div class="qa-item">
+<div class="qa-q">Could a property have zero candidates, not even an initial value?</div>
+<div class="qa-a">In this module, yes — `INITIAL_VALUES` only covers four properties. Query `styles[id(node)]['margin']` on a node with no matching margin rule and you'd get a `KeyError`, since neither the cascade nor inheritance nor the initial-value table ever set it. Real CSS defines an initial value for literally every property so this never happens; this module's table is explicitly a starting subset (DECISIONS.md), and Module 10 will need to grow it.</div>
+</div>
+
+<div class="qa-item">
+<div class="qa-q">Does source order ever matter when specificities are clearly different?</div>
+<div class="qa-a">No — and this is the most common real-world CSS misunderstanding this module's Case 1 is designed to correct. "The last rule in the file wins" is only true when specificities are exactly tied; a highly specific rule declared first in the file still beats a low-specificity rule declared last, every time, as Case 1 demonstrates directly.</div>
+</div>
+
+<h2 data-num="09">What's Next</h2>
+<p>Phase 2 is complete: bytes become a DOM, a stylesheet becomes rules,
+and every node now has one fully-resolved computed style. None of that
+has a position on the page yet. Phase 3 starts with Module 10, turning
+"<code>color: red</code>" and friends into an actual box with a size.</p>
+
+<div class="module-nav">
+  <a href="../08_selector_matching/tutorial.html"><span class="dir">← Previous</span>Module 8: Selector Matching Engine</a>
+  <a class="next" href="../10_box_model/tutorial.html"><span class="dir">Next →</span>Module 10: The Box Model</a>
+</div>
+
+</body>
+</html>
