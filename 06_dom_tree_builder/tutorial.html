@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Module 6 — HTML Tree Builder | Build a Browser From Scratch</title>
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body style="--accent:#10b981; --accent-soft:rgba(16,185,129,0.12);">
+
+<div class="course-header">
+  <span class="module-badge">MODULE 6</span>
+  <span class="track-tag">Track 1 · Phase 2: From Bytes to a Document Tree</span>
+  <h1>HTML Tree Builder <span class="accent">/ DOM Construction</span></h1>
+  <p class="subtitle">Real web pages are full of unclosed tags. A browser that refused to render them would be useless — recovery isn't an edge case, it's the job.</p>
+</div>
+
+<span class="decisions-badge">📄 Companion doc: <a href="DECISIONS.md">DECISIONS.md</a> · Source: <a href="dom_tree_builder.py">dom_tree_builder.py</a></span>
+
+<h2 data-num="00">Prerequisites</h2>
+<div class="prereq-links">
+  <a class="prereq-tag" href="../prereqs/trees_and_recursion.html">Trees &amp; Recursive Traversal</a>
+  <a class="prereq-tag" href="../05_html_tokenizer/tutorial.html">Module 5: HTML Tokenizer</a>
+</div>
+
+<h2 data-num="01">The Big Analogy</h2>
+<div class="callout callout-analogy">
+<div class="callout-label">🍽️ The Restaurant, continued</div>
+<p>The prep cook (Module 5) already split the packing slip into individual
+instructions. Now someone has to actually stack the trays: this bowl of
+sauce goes <em>inside</em> that tray of vegetables, which goes
+<em>inside</em> the main crate. And real packing slips are sloppy — a
+line might say "start a new tray" without ever saying "that tray is
+done." A good prep cook doesn't halt the whole kitchen over that; they
+know the sane, boring rule: a new tray of the same kind means the last
+one is implicitly done. That's this module's whole job, formalized.</p>
+</div>
+
+<h2 data-num="02">What Happens, Step by Step</h2>
+<ol class="step-list">
+<li>Maintain an <strong>open-elements stack</strong>, starting with one synthetic <code>#document</code> root that's always there.</li>
+<li>On a <strong>start tag</strong>: if it's one that implicitly closes whatever's currently on top of the stack (like a new <code>&lt;p&gt;</code> closing an open <code>&lt;p&gt;</code>), pop that first. Then create the element, attach it as a child of whatever's now on top, and push it — unless it's a void element like <code>&lt;br&gt;</code>, which never goes on the stack at all.</li>
+<li>On an <strong>end tag</strong>: search the stack, top-down, for a matching open element. If found, pop it AND everything above it (closing any unclosed tags that got left open inside it). If not found, ignore the end tag entirely.</li>
+<li>On <strong>text</strong> or a <strong>comment</strong>: attach it as a child of whatever's on top of the stack right now.</li>
+<li>At the end of input, whatever's still on the stack just... stays open. The tree is already correctly nested, because nesting was built the moment each start tag was seen — never deferred.</li>
+</ol>
+
+<h2 data-num="03">A Map of the Open-Elements Stack</h2>
+<div class="diagram-box">
+<div class="kv-diagram">
+input:  &lt;ul&gt;&lt;li&gt;A&lt;li&gt;B&lt;/ul&gt;
+
+token          stack (top on the right)         tree so far
+------         ------------------------          -----------
+StartTag ul    [#document, ul]                    #document > ul
+StartTag li    [#document, ul, li]                        > ul > li
+Text "A"                                                        > "A"
+StartTag li    auto-close: pop li (top==li match)
+               [#document, ul]
+               [#document, ul, li]                       > ul > li(2)
+Text "B"                                                        > "B"
+EndTag ul      pop li AND ul (match found at ul,
+               everything above it closes too)
+               [#document]
+</div>
+<p class="diagram-caption">the stack is the live memory of "what's currently open" — the tree is what's left behind as things close</p>
+</div>
+
+<h2 data-num="04">The Code, Explained</h2>
+
+<p>The auto-close check is one `if`, and it's exactly where this module's
+named simplification lives:</p>
+<div class="filename">dom_tree_builder.py</div>
+<pre><code class="language-python">closers = AUTO_CLOSE_ON_TOP.get(tok.name)
+if closers and len(stack) > 1 and stack[-1].tag in closers:
+    stack.pop()
+    top = stack[-1]</code></pre>
+<p>It only ever looks at <code>stack[-1]</code> — the very top. A real
+browser's rule can look further up the stack for a boundary element. See
+DECISIONS.md for exactly which real-world HTML this simplification gets
+wrong (rare) versus right (the common case).</p>
+
+<p>And the line that makes malformed HTML survivable at all:</p>
+<div class="filename">dom_tree_builder.py</div>
+<pre><code class="language-python">if match_idx is not None:
+    del stack[match_idx:]</code></pre>
+<p>Deleting from the match to the end of the stack — not just deleting
+the one matched entry — is what correctly closes any tags that got left
+open inside the one that just closed. Without this, a single unclosed
+<code>&lt;i&gt;</code> inside a properly closed <code>&lt;b&gt;</code>
+would corrupt the stack for the rest of the document.</p>
+
+<h2 data-num="05">Limits / What You Cannot Do Yet</h2>
+<div class="compare-grid">
+  <div class="compare-col cant">
+    <h4>Can't do yet</h4>
+    <ul>
+      <li>Reopen a formatting element after a misnested close (the real "adoption agency algorithm") — Case 5 in the run below shows exactly where this diverges from a real browser</li>
+      <li>Boundary-aware auto-closing (only checks the immediate stack top)</li>
+      <li>Any style or layout information — this is structure only</li>
+    </ul>
+  </div>
+  <div class="compare-col can">
+    <h4>Can do now</h4>
+    <ul>
+      <li>Build a correctly nested tree from well-formed HTML</li>
+      <li>Auto-close common unclosed tags (<code>&lt;p&gt;</code>, <code>&lt;li&gt;</code>, table cells)</li>
+      <li>Correctly handle void elements and stray end tags</li>
+      <li>Produce a valid tree even when input is truncated mid-tag</li>
+    </ul>
+  </div>
+</div>
+
+<h2 data-num="06">Run It</h2>
+<pre><code class="language-bash">cd 06_dom_tree_builder
+python dom_tree_builder.py</code></pre>
+<p>Exact output from a real run, unedited (5 cases; case 5 shown in full since it's the interesting limitation):</p>
+<pre><code>CASE 1 — unclosed &lt;p&gt; auto-closed by the next &lt;p&gt;
+two SIBLING &lt;p&gt; elements (not nested): True
+
+CASE 2 — &lt;li&gt; items with no closing tags, inside a &lt;ul&gt;
+three &lt;li&gt; as direct children of &lt;ul&gt;: True
+
+CASE 3 — a void element (&lt;br&gt;) does not swallow following siblings
+&lt;br&gt; has zero children: True
+&lt;div&gt; has 3 children (text, br, text): True
+
+CASE 4 — an unclosed tag at end-of-input still produces a
+correctly NESTED tree
+&lt;p&gt; correctly nested inside &lt;div&gt; despite no &lt;/p&gt; or &lt;/div&gt;: True
+
+CASE 5 — misnested overlapping tags: &lt;b&gt;Bold &lt;i&gt;both&lt;/b&gt; more&lt;/i&gt;
+&lt;#document&gt;
+  &lt;b&gt;
+    Text('Bold ')
+    &lt;i&gt;
+      Text('both')
+  Text(' more')
+
+Note: real browsers reopen &lt;i&gt; after the misnested &lt;/b&gt; (the
+'adoption agency algorithm'), so 'more' would still be italic.
+This module closes &lt;i&gt; early instead — 'more' ends up as plain
+text, a sibling of &lt;b&gt;, not re-wrapped in a new &lt;i&gt;.</code></pre>
+
+<div class="callout callout-trouble">
+<div class="callout-label">⚠ Getting a blank or broken result?</div>
+<ul>
+<li><strong>Every element ends up nested under one giant root with no siblings:</strong> check that end tags are actually popping the stack — a missing <code>del stack[match_idx:]</code> would leave everything permanently "open."</li>
+<li><strong>A void element like <code>&lt;br&gt;</code> swallows everything after it:</strong> check it's not being pushed onto the stack — see <code>VOID_ELEMENTS</code>.</li>
+</ul>
+</div>
+
+<h2 data-num="07">Brain Exercise</h2>
+<div class="callout callout-brain">
+<div class="callout-label">🧠 Think before you reveal</div>
+<p><strong>Given <code>AUTO_CLOSE_ON_TOP</code> only checks the very top
+of the stack, construct a small HTML snippet where a real browser would
+auto-close a <code>&lt;p&gt;</code>, but this module's simplified check
+would fail to.</strong></p>
+<details>
+<summary>Reveal the answer</summary>
+<p>Something like <code>&lt;p&gt;One&lt;span&gt;middle&lt;p&gt;Two</code> —
+if <code>&lt;span&gt;</code> is left unclosed, it ends up on top of the
+stack when the second <code>&lt;p&gt;</code> arrives, so
+<code>stack[-1].tag in closers</code> checks <code>"span" in {"p"}</code>,
+which is false — no auto-close happens, and the second <code>&lt;p&gt;</code>
+gets incorrectly nested inside the first one (inside the still-open
+<code>&lt;span&gt;</code>) instead of becoming its sibling. A real
+browser's implied-end-tag algorithm would still find and close the
+ancestor <code>&lt;p&gt;</code> here. This is exactly the gap named in
+DECISIONS.md's entry on `AUTO_CLOSE_ON_TOP` — real, but affects a
+narrower slice of real-world HTML than it might first seem, since
+`<span>` left open across a paragraph boundary is itself unusual.</p>
+</details>
+</div>
+
+<h2 data-num="08">There Are No Dumb Questions</h2>
+
+<div class="qa-item">
+<div class="qa-q">Why doesn't a stray, unmatched end tag (like a lone <code>&lt;/div&gt;</code> with nothing open) crash or raise an error?</div>
+<div class="qa-a">Because that's not a hypothetical edge case — it's genuinely common in real-world HTML (often from broken templating systems), and the spec explicitly defines "ignore it" as the correct behavior, not an error condition. A browser that halted on this would be unable to render a large fraction of the real web.</div>
+</div>
+
+<div class="qa-item">
+<div class="qa-q">Is Case 5's behavior actually "wrong," or just different from what a browser does?</div>
+<div class="qa-a">It's a real, acknowledged limitation, not a bug in the sense Module 5's text-ordering issue was. The tree this module produces for that input is internally consistent and doesn't crash — it just doesn't match what a real browser's rendering would look like, because we don't implement the adoption agency algorithm. DECISIONS.md calls this out by name specifically so it's understood as a scoped-out feature, not an oversight.</div>
+</div>
+
+<div class="qa-item">
+<div class="qa-q">Why is there a synthetic <code>#document</code> root instead of just returning a list of top-level nodes?</div>
+<div class="qa-a">Because every later module (cascade, layout) wants to walk "the tree" starting from one node, recursively (see <a href="../prereqs/trees_and_recursion.html">trees &amp; recursion</a>) — a list of top-level nodes would mean every one of those modules has to special-case "the top level," instead of just recursing from one root like every other level.</div>
+</div>
+
+<h2 data-num="09">What's Next</h2>
+<p>The DOM exists now — real, nested, recoverable from broken input.
+Module 7 sets HTML aside and builds an entirely separate tokenizer and
+parser for CSS, producing a structured rule list that Module 8 will later
+match against exactly the kind of tree this module just built.</p>
+
+<div class="module-nav">
+  <a href="../05_html_tokenizer/tutorial.html"><span class="dir">← Previous</span>Module 5: HTML Tokenizer</a>
+  <a class="next" href="../07_css_parser/tutorial.html"><span class="dir">Next →</span>Module 7: CSS Tokenizer &amp; Parser</a>
+</div>
+
+</body>
+</html>
