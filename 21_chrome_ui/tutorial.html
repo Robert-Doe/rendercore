@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Module 21 — Chrome UI | Build a Browser From Scratch</title>
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body style="--accent:#f0abfc; --accent-soft:rgba(240,171,252,0.14); --accent-text:#4a044e;">
+
+<div class="course-header">
+  <span class="module-badge">MODULE 21</span>
+  <span class="track-tag">Track 2 · The Browser Application</span>
+  <h1>Chrome UI: <span class="accent">Address Bar, Tabs, History</span></h1>
+  <p class="subtitle">The part everyone actually calls "the browser." Underneath, it's a list with one number pointing into it.</p>
+</div>
+
+<span class="decisions-badge">📄 Companion doc: <a href="DECISIONS.md">DECISIONS.md</a> · Source: <a href="chrome_ui.py">chrome_ui.py</a></span>
+
+<h2 data-num="00">Prerequisites</h2>
+<div class="prereq-links">
+  <a class="prereq-tag" href="../02_url_parser/tutorial.html">Module 2: URL Parser</a>
+  <a class="prereq-tag" href="../04_https_tls/tutorial.html">Module 4: TLS via Socket Wrapping</a>
+</div>
+
+<h2 data-num="01">The Big Analogy</h2>
+<div class="callout callout-analogy">
+<div class="callout-label">🍽️ The Restaurant, continued</div>
+<p>A table's server keeps a running paper strip of every dish that's
+been brought to that table tonight, in order, plus a pin marking which
+one is CURRENTLY in front of the guest. "Bring the previous one back"
+moves the pin left; "bring the next one" moves it right. But if the
+guest asks for something totally different while the pin is sitting in
+the middle of the strip — every dish that was ahead of the pin gets torn
+off and thrown out. There's no version of "go forward" anymore to
+something that's been physically discarded — that's not a missing
+feature, it's just what happens when you order something new instead of
+continuing down a path you already left.</p>
+</div>
+
+<h2 data-num="02">What Happens, Step by Step</h2>
+<ol class="step-list">
+<li>User (or a script) calls <code>go(url)</code>. The URL is parsed (Module 2) to decide http vs. https.</li>
+<li>A real fetch happens — Module 3 for http, Module 4 for https — over the real network.</li>
+<li>The real response's <code>&lt;title&gt;</code> is pulled out using Module 5's real tokenizer.</li>
+<li>Before adding this new page to history, EVERYTHING past the current position is discarded — any abandoned "forward" pages are gone.</li>
+<li>The new page is appended, and the current-position pointer moves to it.</li>
+<li><code>back()</code>/<code>forward()</code> just move that pointer — they never fetch anything new, and never touch the list's contents.</li>
+</ol>
+
+<h2 data-num="03">A Map of a Navigation Sequence</h2>
+<div class="diagram-box">
+<div class="kv-diagram">
+  go(example.com)        entries: [example.com]                    index: 0
+  go(info.cern.ch)        entries: [example.com, info.cern.ch]       index: 1
+  back()                  entries: [example.com, info.cern.ch]       index: 0  (unchanged list!)
+  go(https://example.com) TRUNCATE entries[1:] first -> [example.com]
+                           THEN append               -> [example.com, https://example.com]
+                                                                       index: 1
+
+  info.cern.ch is now GONE from the list entirely — not just unreachable,
+  actually discarded. forward() from here returns None.
+</div>
+<p class="diagram-caption">the truncation happens BEFORE the append — reversing that order is the classic history bug</p>
+</div>
+
+<h2 data-num="04">The Code, Explained</h2>
+
+<p>The entire correctness of this module rests on the ORDER of two lines:</p>
+<div class="filename">chrome_ui.py</div>
+<pre><code class="language-python">def push(self, entry):
+    self.entries = self.entries[: self.index + 1]   # 1. discard abandoned forward entries
+    self.entries.append(entry)                        # 2. THEN add the new one
+    self.index += 1</code></pre>
+<p>Swap these two lines and the new entry would get discarded along with
+the old forward history, or the truncation would happen a step too late
+— either way, a real, observable navigation bug.</p>
+
+<p>Reusing Module 5 for something this module never expected to need is
+worth pointing at directly:</p>
+<div class="filename">chrome_ui.py</div>
+<pre><code class="language-python">tokens = tokenize(html)   # Module 5, completely unmodified
+for i, tok in enumerate(tokens):
+    if isinstance(tok, StartTag) and tok.name == "title":
+        if i + 1 < len(tokens) and isinstance(tokens[i + 1], Text):
+            return tokens[i + 1].data.strip()</code></pre>
+
+<h2 data-num="05">Limits / What You Cannot Do Yet</h2>
+<div class="compare-grid">
+  <div class="compare-col cant">
+    <h4>Can't do yet</h4>
+    <ul>
+      <li>Actually RENDER a fetched page — this module only fetches and tracks history, doesn't connect to Modules 6-16</li>
+      <li>Multiple simultaneous tabs sharing one window (each `BrowserTab` here is standalone)</li>
+      <li>Persist history across restarts — it lives only in memory, for one run</li>
+    </ul>
+  </div>
+  <div class="compare-col can">
+    <h4>Can do now</h4>
+    <ul>
+      <li>Navigate to real pages over real network connections, http and https both</li>
+      <li>Correctly maintain back/forward history, including the truncation case most implementations get wrong on a first try</li>
+      <li>Safely handle navigating past either end of history without crashing</li>
+    </ul>
+  </div>
+</div>
+
+<h2 data-num="06">Run It</h2>
+<pre><code class="language-bash">cd 21_chrome_ui
+python chrome_ui.py</code></pre>
+<p>Exact output from a real run, unedited:</p>
+<pre><code>go(1): http://example.com/ -> 200 'Example Domain'
+go(2): http://info.cern.ch/hypertext/WWW/TheProject.html -> 200 'The World Wide Web project'
+
+history has 2 entries, currently at index 1 (the 2nd page): True
+
+back() -> http://example.com/ -> 'Example Domain'
+can_go_forward() is now True (info.cern.ch is still reachable): True
+
+  TLS established: TLSv1.3, cipher: TLS_AES_256_GCM_SHA384
+  go(3): https://example.com/ -> 200 'Example Domain'
+
+======================================================================
+Checks
+======================================================================
+history now has exactly 2 entries, not 3 — info.cern.ch was correctly discarded: True
+the surviving 2 entries are example.com (http) then example.com (https) — info.cern.ch is GONE: True
+forward() now returns None — there is nothing to go forward to: True
+current entry is the https version, correctly the most recent: True
+
+back() from here correctly returns to the ORIGINAL http example.com entry: True
+back() again is a safe no-op (can't go before the first page): True</code></pre>
+
+<div class="callout callout-trouble">
+<div class="callout-label">⚠ Getting a blank or broken result?</div>
+<ul>
+<li><strong>History keeps growing instead of truncating:</strong> check `push()` slices `entries[: self.index + 1]` BEFORE appending, not after.</li>
+<li><strong><code>info.cern.ch</code> fetch fails:</strong> it's a real, historically significant but small site — confirm outbound HTTP (not just HTTPS) traffic isn't blocked on your network.</li>
+<li><strong>Title comes back <code>(untitled)</code>:</strong> check the page actually has a `&lt;title&gt;` tag whose very next token is a `Text` token — a comment or attribute sitting between them would break this simple lookup (a real, named limitation, not handled by this module).</li>
+</ul>
+</div>
+
+<h2 data-num="07">Brain Exercise</h2>
+<div class="callout callout-brain">
+<div class="callout-label">🧠 Think before you reveal</div>
+<p><strong>Suppose `push()`'s two lines were swapped — append first,
+THEN truncate to `entries[: self.index + 1]`. Trace through this
+module's exact test sequence and figure out what `tab.history.entries`
+would contain right after the `https://example.com` navigation. Would
+the bug be obvious or subtle?</strong></p>
+<details>
+<summary>Reveal the answer</summary>
+<p>Genuinely subtle, not obvious — that's what makes this a real bug
+worth naming. At the point of the third navigation, <code>index</code>
+is 0 (after the earlier <code>back()</code>). Appending first would make
+<code>entries</code> temporarily
+<code>[example.com, info.cern.ch, https://example.com]</code> (length 3).
+THEN truncating to <code>entries[: self.index + 1]</code> — but
+`self.index` is still 0 at this point in a swapped version, since it
+hasn't been incremented yet — would slice down to
+<code>entries[:1]</code>, i.e. just <code>[example.com]</code>,
+DISCARDING the new page you just tried to navigate to along with the
+old one! The final result would show only 1 history entry, with the
+CURRENT page (the one just visited) missing entirely — a much stranger,
+harder-to-diagnose symptom than "forward history didn't clear," because
+the bug report would be "my address bar shows a page that isn't in my
+history at all."</p>
+</details>
+</div>
+
+<h2 data-num="08">There Are No Dumb Questions</h2>
+
+<div class="qa-item">
+<div class="qa-q">Why fetch info.cern.ch specifically, instead of just using two example.com URLs?</div>
+<div class="qa-a">Partly to prove the fetch is genuinely hitting different real content (not a coincidence of caching or a hardcoded fixture), and partly because it's a nice, real, historically meaningful page to have this course's own from-scratch browser successfully load — the actual first website, still online, served the same simple way it always has been.</div>
+</div>
+
+<div class="qa-item">
+<div class="qa-q">Why does `back()`/`forward()` never re-fetch the page over the network?</div>
+<div class="qa-a">Because the response is already stored in the `HistoryEntry` from when it was originally fetched — navigating history is a LOCAL operation on already-known data, not a new network request. (Real browsers do sometimes re-fetch on back/forward, depending on caching headers and whether the page opted out of being cached in history — a real nuance this module's simpler model doesn't need to handle.)</div>
+</div>
+
+<div class="qa-item">
+<div class="qa-q">Is `can_go_forward()` returning `True` right after a `back()` call obvious, or does it deserve its own check?</div>
+<div class="qa-a">It deserves its own check specifically because it's the thing that's WRONG in a broken implementation right up until the next navigation happens — a version of this code with the truncation bug would ALSO report `can_go_forward() == True` correctly at this exact point, only breaking once a new page is visited. Testing intermediate states, not just final ones, is what catches bugs whose symptoms only appear one step later.</div>
+</div>
+
+<h2 data-num="09">What's Next</h2>
+<p>This module fetched pages but never remembered anything ABOUT the
+user across those fetches — no login state, no preferences, nothing
+that would survive being asked for again. Module 22 builds cookies and
+storage: state that persists across requests to the same origin.</p>
+
+<div class="module-nav">
+  <a href="../20_invalidation_pipeline/tutorial.html"><span class="dir">← Previous</span>Module 20: Invalidation &amp; Re-render Pipeline</a>
+  <a class="next" href="../22_cookies_storage/tutorial.html"><span class="dir">Next →</span>Module 22: Cookies &amp; Storage</a>
+</div>
+
+</body>
+</html>
