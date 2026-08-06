@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Module 12 — Text Layout &amp; Line Breaking | Build a Browser From Scratch</title>
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body style="--accent:#fdba74; --accent-soft:rgba(253,186,116,0.16); --accent-text:#431407;">
+
+<div class="course-header">
+  <span class="module-badge">MODULE 12</span>
+  <span class="track-tag">Track 1 · Phase 3: From Tree to Geometry</span>
+  <h1>Text Layout <span class="accent">&amp; Line Breaking</span></h1>
+  <p class="subtitle">A browser never asks "how do I wrap text beautifully." It asks "does the next word fit — yes or no," over and over, left to right.</p>
+</div>
+
+<span class="decisions-badge">📄 Companion doc: <a href="DECISIONS.md">DECISIONS.md</a> · Source: <a href="text_layout.py">text_layout.py</a></span>
+
+<h2 data-num="00">Prerequisites</h2>
+<div class="prereq-links">
+  <a class="prereq-tag" href="../prereqs/coordinate_systems.html">Coordinate Systems &amp; the Box Idea</a>
+  <a class="prereq-tag" href="../11_block_inline_layout/tutorial.html">Module 11: Block &amp; Inline Layout</a>
+</div>
+
+<h2 data-num="01">The Big Analogy</h2>
+<div class="callout callout-analogy">
+<div class="callout-label">🍽️ The Restaurant, continued</div>
+<p>Think of a menu board with a fixed physical width, and someone writing
+today's specials on it one word at a time, left to right. They never plan
+the whole sentence in advance — they just keep asking "does the next word
+still fit on this line?" The moment the answer is no, they move the chalk
+to the start of the next line and keep going from there. They never erase
+and rewrite an earlier line to make things look more even — that would be
+a fundamentally different (and slower) way of writing the board, the kind
+a professional typesetter does for a printed book, not what a menu board
+writer does every single morning.</p>
+</div>
+
+<h2 data-num="02">What Happens, Step by Step</h2>
+<ol class="step-list">
+<li>Split the text into words on whitespace.</li>
+<li>Start an empty current line, width 0.</li>
+<li>For each word: would adding it (plus a space, if the line isn't empty) push the line's width past <code>max_width</code>?</li>
+<li>If yes AND the line already has at least one word: close the current line, start a new one with just this word.</li>
+<li>Otherwise: add the word to the current line, whether it technically "fits" or not (an empty line must always accept at least one word, even an over-wide one — see step 6).</li>
+<li>After all words are placed, assign each line a real (x, y): same x for every line, y increasing by one line-height per line — the inline equivalent of Module 11's block-stacking cursor.</li>
+</ol>
+
+<h2 data-num="03">A Map of the Wrapping Decision</h2>
+<div class="diagram-box">
+<div class="kv-diagram">
+  max_width = 100,  char_width = 10   (so "World" = 5 chars = 50px)
+
+  word "Hello" (50px): line empty -> always accept.  line=[Hello] width=50
+  word "World" (50px): add = space(10)+50 = 60. 50+60=110 > 100 -> BREAK.
+                        new line=[World] width=50
+  word "this"  (40px): add = 10+40 = 50. 50+50=100, NOT > 100 -> fits.
+                        line=[World, this] width=100
+  word "is"    (20px): add = 10+20 = 30. 100+30=130 > 100 -> BREAK.
+                        new line=[is] width=20
+  ...
+
+  RESULT:  ["Hello"], ["World", "this"], ["is", "a", "test"], ["of"], ["wrapping"]
+</div>
+<p class="diagram-caption">one decision, repeated: does the next word fit? never a decision that looks backward at earlier lines</p>
+</div>
+
+<h2 data-num="04">The Code, Explained</h2>
+
+<p>The entire algorithm is one loop with one condition:</p>
+<div class="filename">text_layout.py</div>
+<pre><code class="language-python">for word in words:
+    word_width = measure_fn(word)
+    add_width = word_width if not current else space_width + word_width
+
+    if current and current_width + add_width > max_width:
+        lines.append(current)
+        current = [word]
+        current_width = word_width
+    else:
+        current.append(word)
+        current_width += add_width</code></pre>
+<p>Notice <code>if current and ...</code> — the break only triggers when
+the current line already has something in it. An empty line always
+accepts the next word regardless of width, which is exactly what
+guarantees Case 2 (an over-wide word) can never cause an infinite loop.</p>
+
+<h2 data-num="05">Limits / What You Cannot Do Yet</h2>
+<div class="compare-grid">
+  <div class="compare-col cant">
+    <h4>Can't do yet</h4>
+    <ul>
+      <li>Measure real text width — uses a fixed-width stand-in, not actual font metrics</li>
+      <li>Justify text (stretch spaces to make both edges flush)</li>
+      <li>Break mid-word (hyphenation) for a word that doesn't fit</li>
+      <li>Mix text with other inline elements (bold spans, links) on the same line</li>
+    </ul>
+  </div>
+  <div class="compare-col can">
+    <h4>Can do now</h4>
+    <ul>
+      <li>Correctly wrap real text into lines at any given width</li>
+      <li>Correctly handle a word wider than the container without breaking</li>
+      <li>Correctly reposition lines vertically, stacked by line height</li>
+    </ul>
+  </div>
+</div>
+
+<h2 data-num="06">Run It</h2>
+<pre><code class="language-bash">cd 12_text_line_breaking
+python text_layout.py</code></pre>
+<p>Exact output from a real run, unedited:</p>
+<pre><code>CASE 1 — ordinary word wrapping at a narrow width
+  y=    0  width=   50  'Hello'
+  y=   20  width=  100  'World this'
+  y=   40  width=   90  'is a test'
+  y=   60  width=   20  'of'
+  y=   80  width=   80  'wrapping'
+
+matches hand-computed expected line groupings: True
+5 lines, each 20px apart vertically (y = 0,20,40,60,80): True
+
+CASE 2 — a single word wider than max_width doesn't break or hang
+  y=    0  width=   50  'short'
+  y=   20  width=  340  'Supercalifragilisticexpialidocious'
+  y=   40  width=   60  'short2'
+
+long word gets its OWN line (not merged, not crashed): True
+that line's width (340) legitimately EXCEEDS max_width (100) — real, intentional overflow, not a bug: True
+
+CASE 3 — a wider container produces fewer, longer lines from the SAME text
+  ['Hello World this is a test of wrapping']
+the whole sentence fits on ONE line when the container is wide enough: True</code></pre>
+
+<div class="callout callout-trouble">
+<div class="callout-label">⚠ Getting a blank or broken result?</div>
+<ul>
+<li><strong>Infinite loop / hangs:</strong> check the empty-current-line case still unconditionally accepts a word — if that guard is removed, an over-wide word can never be placed and the algorithm gets stuck deciding it doesn't fit, forever.</li>
+<li><strong>Every word ends up on its own line:</strong> check `add_width` correctly includes `space_width` only when the line isn't empty — always adding a space, even to the first word, would overcount every line's width.</li>
+</ul>
+</div>
+
+<h2 data-num="07">Brain Exercise</h2>
+<div class="callout callout-brain">
+<div class="callout-label">🧠 Think before you reveal</div>
+<p><strong>Case 1's second line came out as "World this" (100px exactly)
+rather than stopping after just "World." Given <code>max_width=100</code>,
+why does a line that lands EXACTLY at the limit count as fitting, rather
+than being treated as one pixel too many?</strong></p>
+<details>
+<summary>Reveal the answer</summary>
+<p>Because the break condition is strictly <code>current_width + add_width
+&gt; max_width</code> — using <code>&gt;</code>, not <code>&gt;=</code>.
+A line that lands EXACTLY at the container's width still fits inside it;
+it doesn't overflow until it exceeds it. This is a real, meaningful
+choice (not an off-by-one accident): using <code>&gt;=</code> instead
+would reject perfectly valid content that happens to use the container's
+width down to the last pixel, which would be visibly wrong compared to
+how every real browser actually renders text that fits exactly.</p>
+</details>
+</div>
+
+<h2 data-num="08">There Are No Dumb Questions</h2>
+
+<div class="qa-item">
+<div class="qa-q">Why not use the more sophisticated line-breaking algorithm word processors use for justified text?</div>
+<div class="qa-a">Because that's not what CSS's normal text flow actually specifies, and this course is building what browsers do, not what's theoretically nicest. The Knuth-Plass algorithm (and similar) can produce more visually even paragraphs by looking ahead and sometimes making an earlier line slightly less full to avoid a bad break later — genuinely useful for justified, printed text, but more expensive and not how a browser lays out ordinary unjustified paragraphs.</div>
+</div>
+
+<div class="qa-item">
+<div class="qa-q">Is it a real limitation that `fixed_width_measure` treats every character as the same width?</div>
+<div class="qa-a">Yes, and it's named as one on purpose (DECISIONS.md) rather than left implicit. The entire reason it's there is so this module's line-break math is checkable by hand before ever running the code — every line grouping in this tutorial was computed on paper first. Because `measure_fn` is a pluggable parameter, swapping in Module 15's real font metrics later requires zero changes to `wrap_words()` itself.</div>
+</div>
+
+<div class="qa-item">
+<div class="qa-q">What happens to multiple spaces between words, or a tab character?</div>
+<div class="qa-a"><code>text.split()</code> (no arguments) collapses any run of whitespace — spaces, tabs, newlines — into single word separators and discards it entirely, so "a  b" (two spaces) and "a\tb" both produce the same two words, "a" and "b". This matches how HTML actually treats whitespace in normal text flow (collapsing runs of whitespace to one space) closely enough for this module's purposes, though real HTML whitespace collapsing has its own more detailed rules this course doesn't implement.</div>
+</div>
+
+<h2 data-num="09">What's Next</h2>
+<p>Phase 3 has one module left. Module 13 handles two things this
+module and Module 11 both sidestepped: distributing space among flex
+children along one axis, and deciding paint order for elements that
+visually overlap — independent of where they sit in the DOM.</p>
+
+<div class="module-nav">
+  <a href="../11_block_inline_layout/tutorial.html"><span class="dir">← Previous</span>Module 11: Block &amp; Inline Layout</a>
+  <a class="next" href="../13_flexbox_stacking/tutorial.html"><span class="dir">Next →</span>Module 13: Stacking &amp; a Flexbox Subset</a>
+</div>
+
+</body>
+</html>
