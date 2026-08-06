@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Module 25 (Bonus) — Sandboxing Deep Dive | Build a Browser From Scratch</title>
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body style="--accent:#ef4444; --accent-soft:rgba(239,68,68,0.12);">
+
+<div class="course-header">
+  <span class="module-badge">MODULE 25 · BONUS</span>
+  <span class="track-tag">Track 2 · Security Deep Dive — the last module</span>
+  <h1>Sandboxing <span class="accent">Deep Dive</span></h1>
+  <p class="subtitle">This module's own code, deliberately and successfully, breaks its own security model. That's not a mistake — it's the entire lesson.</p>
+</div>
+
+<span class="decisions-badge">📄 Companion doc: <a href="DECISIONS.md">DECISIONS.md</a> · Source: <a href="sandboxing.py">sandboxing.py</a> + <a href="renderer_worker.py">renderer_worker.py</a></span>
+
+<h2 data-num="00">Prerequisites</h2>
+<div class="prereq-links">
+  <a class="prereq-tag" href="../prereqs/processes_and_threads.html">Processes vs. Threads</a>
+  <a class="prereq-tag" href="../24_process_isolation/tutorial.html">Module 24: Multi-Process Tab Isolation</a>
+  <a class="prereq-tag" href="../23_same_origin_policy/tutorial.html">Module 23: Same-Origin Policy</a>
+  <a class="prereq-tag" href="../04_https_tls/tutorial.html">Module 4: TLS via Socket Wrapping</a>
+</div>
+
+<h2 data-num="01">The Big Analogy</h2>
+<div class="callout callout-analogy">
+<div class="callout-label">🍽️ The Restaurant, continued</div>
+<p>A junior line cook is never given a key to the walk-in freezer or the
+liquor cabinet. If they need something from either, they ask a manager,
+who fetches it for them. That's the polite version of the system — and
+it works great, right up until you ask: what if the "junior line cook"
+is actually an intruder who snuck into the kitchen wearing a stolen
+uniform? Politely asking a manager for the key does nothing to stop
+someone who was never going to ask in the first place — they'll just
+walk to the freezer themselves. The thing that ACTUALLY stops them isn't
+the "please ask first" custom — it's the freezer door being <em>physically
+locked</em>, with a lock the manager controls and the intruder's stolen
+uniform doesn't open. This module builds the "please ask first" system
+in full, working detail — and then shows, honestly, that without the
+physical lock, it stops absolutely nobody who wasn't already going to
+cooperate.</p>
+</div>
+
+<h2 data-num="02">What Happens, Step by Step</h2>
+<ol class="step-list">
+<li>A <strong>broker</strong> process (trusted, holds real file access) launches a <strong>renderer</strong> process as a genuinely separate OS process, connected only by two pipes (stdin/stdout).</li>
+<li>For a COOPERATIVE request: the renderer sends a JSON request over the pipe and waits — it has no file-opening code in this path at all.</li>
+<li>The broker checks the request against a <strong>policy</strong> (is the resolved, absolute path inside the one allowed directory?).</li>
+<li>If allowed, the broker itself opens and reads the real file, sending the content back. If denied, it sends back an error — and its own access log proves it never opened the file at all.</li>
+<li>For a MALICIOUS request: the renderer ignores the entire protocol and calls <code>open()</code> directly, itself — simulating a compromised renderer that no longer follows any rules.</li>
+<li>That direct read <strong>succeeds</strong> — because nothing in this module's Python-only toolchain stops an OS process from making its own system calls. This is the module's actual point.</li>
+</ol>
+
+<h2 data-num="03">A Map of the Two Paths</h2>
+<div class="diagram-box">
+<div class="kv-diagram">
+COOPERATIVE PATH (the renderer follows the rules):
+
+  renderer                    broker (real file access)
+     │  {"request":"read_file",                │
+     │   "path": "..."}                        │
+     │ ───────────────────────────────────────▶│
+     │                                          │  check Policy
+     │                                          │  ALLOWED -> open() for real
+     │                                          │  DENIED  -> never opens it
+     │  {"ok": true/false, ...}                 │
+     │ ◀───────────────────────────────────────│
+     ▼
+  renderer only ever learns what the broker chooses to tell it
+
+
+MALICIOUS PATH (the renderer ignores the rules):
+
+  renderer                    broker
+     │  open(secret_path)  <-- DIRECTLY, no request sent at all
+     │  SUCCEEDS — the OS has no idea a "broker" or "policy" exists
+     ▼
+  the broker's policy is 100% BYPASSED, not defeated — just never consulted
+</div>
+<p class="diagram-caption">the top path is a real, working protocol; the bottom path shows exactly what that protocol does and doesn't protect against</p>
+</div>
+
+<h2 data-num="04">The Code, Explained</h2>
+
+<p>The broker's file access is the ONLY real file-reading code in the
+cooperative path — this single fact is what makes a denial provable, not
+just claimed:</p>
+<div class="filename">sandboxing.py</div>
+<pre><code class="language-python">if self.policy.permits_read(request["path"]):
+    self.opened_paths_log.append(request["path"])
+    with open(request["path"], "r") as f:
+        data = f.read()
+    self._send({"ok": True, "data": data})
+else:
+    self._send({"ok": False, "error": "policy denied: ..."})</code></pre>
+<p>The `opened_paths_log` isn't decoration — it's what lets this module's
+checks confirm the secret file's path never appears there after a
+denial, rather than just trusting the error message.</p>
+
+<p>And the line that this entire module exists to make visible — the
+renderer, given a chance to misbehave, simply does:</p>
+<div class="filename">renderer_worker.py</div>
+<pre><code class="language-python">elif action == "malicious_read":
+    # Ignore the protocol. Just open the file ourselves.
+    with open(path, "r") as f:
+        data = f.read()
+    send({"result": "malicious_read", "ok": True, "data": data})</code></pre>
+<p>Nothing about `subprocess.Popen`, the JSON protocol, or the `Policy`
+class prevents this method from being called and succeeding. The OS lets
+this process open this file, full stop — the broker was never even in
+the loop.</p>
+
+<h2 data-num="05">Limits / What You Cannot Do Yet</h2>
+<div class="compare-grid">
+  <div class="compare-col cant">
+    <h4>Can't do yet</h4>
+    <ul>
+      <li>Actually PREVENT a malicious/compromised renderer from bypassing the broker — this module proves it CANNOT, on purpose</li>
+      <li>Any real OS-level syscall filtering (seccomp-bpf, restricted tokens, sandbox profiles) — named in detail below, none implemented</li>
+      <li>Network-request or clipboard/device mediation — only file reads are modeled, as the clearest minimal example</li>
+    </ul>
+  </div>
+  <div class="compare-col can">
+    <h4>Can do now</h4>
+    <ul>
+      <li>Build a real, working broker/target process architecture matching real browsers' structural pattern</li>
+      <li>Prove a policy-based denial is real (via an access log), not just a returned error string</li>
+      <li>Name precisely — not vaguely — which real OS primitive would close the gap this module deliberately leaves open</li>
+    </ul>
+  </div>
+</div>
+
+<h2 data-num="06">Run It</h2>
+<pre><code class="language-bash">cd 25_sandboxing
+python sandboxing.py</code></pre>
+<p>Exact output from a real run, unedited:</p>
+<pre><code>======================================================================
+TEST 1 — cooperative renderer requests an ALLOWED file
+======================================================================
+  renderer's final result: {'result': 'cooperative_read', 'ok': True, 'data': 'This is public, sandboxed content.'}
+
+======================================================================
+TEST 2 — cooperative renderer requests the DISALLOWED secret file
+======================================================================
+  renderer's final result: {'result': 'cooperative_read', 'ok': False, 'error': "policy denied: '...\\secret.txt' is outside the allowed directory"}
+
+======================================================================
+TEST 3 — a MALICIOUS renderer ignores the broker entirely and
+opens the secret file directly, itself
+======================================================================
+  renderer's final result: {'result': 'malicious_read', 'ok': True, 'data': "TOP SECRET — should never leave the broker's control"}
+
+======================================================================
+Checks
+======================================================================
+TEST 1 (allowed, cooperative) succeeded with real content: True
+TEST 2 (disallowed, cooperative) was DENIED: True
+the broker's own log NEVER shows it opened the secret file (a real, provable denial — not just a denial message): True
+the broker's log DOES show it opened the allowed file: True
+TEST 3 (malicious, direct) SUCCEEDED — the protocol alone did NOT stop it, proving a polite convention is not a security boundary (see DECISIONS.md for what actually closes this gap in real browsers): True</code></pre>
+
+<div class="callout callout-trouble">
+<div class="callout-label">⚠ Getting a blank or broken result?</div>
+<ul>
+<li><strong>The subprocess hangs:</strong> the broker/renderer protocol is strictly turn-based (broker sends, renderer sends back, broker reads) — if either side sends two lines in a row without the other reading in between, both processes will block waiting on each other forever. Check the exact send/receive order in both files matches.</li>
+<li><strong>TEST 3 unexpectedly gets DENIED:</strong> double check `renderer_worker.py`'s `malicious_read` branch really does call `open()` directly and isn't accidentally routed through the broker request/reply protocol.</li>
+</ul>
+</div>
+
+<h2 data-num="07">Brain Exercise</h2>
+<div class="callout callout-brain">
+<div class="callout-label">🧠 Think before you reveal</div>
+<p><strong>Real Chromium's actual sandboxed renderer process CANNOT
+simply `open()` an arbitrary file the way this module's malicious
+renderer can — even though Chromium's renderer is also, underneath, an
+ordinary OS process running ordinary code. Given everything built in
+this module, what SPECIFIC extra thing would need to exist for
+`malicious_read` to actually fail here the way it does in a real
+browser?</strong></p>
+<details>
+<summary>Reveal the answer</summary>
+<p>The operating system's KERNEL would need to be told, from OUTSIDE the
+renderer process, to reject that specific `open()` syscall before it
+executes — regardless of what the process's own code (compromised or
+not) asks for. On Linux, this is a seccomp-bpf filter installed on the
+process (typically right after it starts, before any untrusted code
+runs) that the kernel enforces on every subsequent syscall that process
+ever makes — no amount of code running INSIDE that process, however
+malicious, can lift a filter enforced from outside it by the kernel. This
+course's `renderer_worker.py` has no such filter installed — it's an
+ordinary, unrestricted Python process, which is precisely why its
+`open()` call in `malicious_read` succeeds exactly like any normal
+Python script's would. The broker/target PROCESS SPLIT this module built
+is a real, necessary piece of the real architecture — but it's the
+kernel-level filter, not the process split alone, that provides the
+actual enforcement.</p>
+</details>
+</div>
+
+<h2 data-num="08">There Are No Dumb Questions</h2>
+
+<div class="qa-item">
+<div class="qa-q">If this module "doesn't actually work" as a real sandbox, why build it at all?</div>
+<div class="qa-a">Because the ARCHITECTURE — a trusted broker process mediating requests from an untrusted renderer over a narrow, explicit channel — is genuinely how real browsers are structured, and understanding that structure is real, transferable knowledge. What this module is careful never to claim is that the architecture alone, without OS enforcement underneath it, constitutes real security. Building the honest, working version of the "asking politely" layer, and then honestly demonstrating its limit, teaches the actual shape of the problem better than either skipping the demo or overstating what it proves.</div>
+</div>
+
+<div class="qa-item">
+<div class="qa-q">Would running the broker as a different OS USER than the renderer fix this?</div>
+<div class="qa-a">It would help — real sandboxes do sometimes use reduced-privilege OS users/tokens as one layer — but it's not sufficient on its own either. A renderer running as a low-privilege user can typically still read any file that user account has ordinary read access to (which, for a normal desktop user, is often "most of their own files"), so a determined malicious renderer could still read plenty of sensitive data without ever needing the broker. Real sandboxes combine reduced privileges WITH syscall-level filtering (seccomp-bpf, etc.) specifically because privilege reduction alone leaves this exact gap.</div>
+</div>
+
+<div class="qa-item">
+<div class="qa-q">Where does Module 23's same-origin policy fit relative to this module's sandbox?</div>
+<div class="qa-a">They're different layers protecting against different threats. Same-origin policy (Module 23) is a JS-engine-level rule about what a NORMAL, non-compromised script running in a tab is allowed to do — it assumes the renderer process itself is behaving correctly and just restricts what the SCRIPT inside it can request. Sandboxing (this module) assumes the opposite worst case — that the renderer process ITSELF has been compromised (its code is no longer trustworthy at all, same-origin checks included, since they'd be running inside the very process an attacker now controls) — and asks what stops it from reaching the rest of the system regardless. Real browsers need both: same-origin policy for well-behaved scripts, OS-level sandboxing as the backstop for when a renderer stops being well-behaved entirely.</div>
+</div>
+
+<h2 data-num="09">What's Next</h2>
+<p>Every box on Module 0's original map has now been built, for real,
+and verified — this was the last module of the core 26-module course.
+Phase 5 continues past it with a focused extension: the specific
+encoders and sanitizers that stand between untrusted input and Cross-Site
+Scripting, starting with the URL layer in Module 26.</p>
+
+<div class="module-nav">
+  <a href="../24_process_isolation/tutorial.html"><span class="dir">← Previous</span>Module 24: Multi-Process Tab Isolation</a>
+  <a class="next" href="../26_url_encoding/tutorial.html"><span class="dir">Next →</span>Module 26: URL Encoding &amp; Decoding</a>
+</div>
+
+</body>
+</html>
