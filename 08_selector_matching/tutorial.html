@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Module 8 — Selector Matching Engine | Build a Browser From Scratch</title>
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body style="--accent:#86efac; --accent-soft:rgba(134,239,172,0.14); --accent-text:#052e16;">
+
+<div class="course-header">
+  <span class="module-badge">MODULE 8</span>
+  <span class="track-tag">Track 1 · Phase 2: From Bytes to a Document Tree</span>
+  <h1>Selector Matching <span class="accent">Engine</span></h1>
+  <p class="subtitle">The DOM and the parsed stylesheet have never met until this module. This is the introduction.</p>
+</div>
+
+<span class="decisions-badge">📄 Companion doc: <a href="DECISIONS.md">DECISIONS.md</a> · Source: <a href="selector_matching.py">selector_matching.py</a></span>
+
+<h2 data-num="00">Prerequisites</h2>
+<div class="prereq-links">
+  <a class="prereq-tag" href="../prereqs/trees_and_recursion.html">Trees &amp; Recursive Traversal</a>
+  <a class="prereq-tag" href="../06_dom_tree_builder/tutorial.html">Module 6: HTML Tree Builder</a>
+  <a class="prereq-tag" href="../07_css_parser/tutorial.html">Module 7: CSS Parser</a>
+</div>
+
+<h2 data-num="01">The Big Analogy</h2>
+<div class="callout callout-analogy">
+<div class="callout-label">🍽️ The Restaurant, continued</div>
+<p>The style guide (Module 7) says "for anything tagged 'soup' that's on
+a table inside the 'formal' section, use the silver spoon." Now a
+specific dish is in front of you: is it soup? Is the table it's on
+actually inside the formal section, or just near it? You don't check
+"is this table literally touching the formal section's rope" — you check
+"if I trace outward from this table through every enclosing area, do I
+ever cross into 'formal'?" That outward trace, one enclosing area at a
+time, is exactly how a descendant combinator gets checked here.</p>
+</div>
+
+<h2 data-num="02">What Happens, Step by Step</h2>
+<ol class="step-list">
+<li>For a given node and a given selector, check the <strong>rightmost</strong> compound selector against the node itself first — type, id, and classes must ALL match (an AND, never an OR).</li>
+<li>If that fails, the whole selector fails immediately — no need to look at ancestors at all.</li>
+<li>If it succeeds and there are more compounds to the left, walk up from the node's parent, ancestor by ancestor, looking for one that matches the next compound to the left.</li>
+<li>Repeat leftward until every compound has matched some ancestor (success) or an ancestor walk runs out before finding a match (failure).</li>
+<li>A rule matches a node if <strong>any</strong> of its comma-separated selectors match — <code>.card, .panel</code> applies if either matches.</li>
+<li>Collect every rule in the stylesheet that matches, keeping the stylesheet's original order — Module 9 needs that order.</li>
+</ol>
+
+<h2 data-num="03">A Map of the Matching Direction</h2>
+<div class="diagram-box">
+<div class="kv-diagram">
+  selector:  nav a.active         node being tested: the <a class="active">
+
+  STEP 1 (rightmost first):
+    does &lt;a class="active"&gt; itself match "a.active"?  -> YES
+
+  STEP 2 (walk ancestors leftward):
+    parent -> &lt;nav&gt;  does it match "nav"?  -> YES, found. Selector MATCHES.
+
+  Compare: if step 1 had instead been checked against the <nav> or
+  <body>, or if matching started from the document root searching
+  DOWNWARD for "nav", every rule would need to search the whole tree
+  for every node — right-to-left, starting at the node itself, is what
+  keeps this fast.
+</div>
+<p class="diagram-caption">right-to-left matching checks the cheapest, most specific thing first</p>
+</div>
+
+<h2 data-num="04">The Code, Explained</h2>
+
+<p>The whole algorithm is two small functions working together:</p>
+<div class="filename">selector_matching.py</div>
+<pre><code class="language-python">def matches_selector(node, selector):
+    parts = selector.parts
+    if not matches_simple(node, parts[-1]):    # rightmost, against the node itself
+        return False
+    current = node
+    for part in reversed(parts[:-1]):           # walk leftward
+        current = _find_matching_ancestor(current, part)
+        if current is None:
+            return False
+    return True</code></pre>
+<p>Notice this never looks at <em>children</em> — only the node itself and
+its ancestors. That asymmetry is deliberate and matches how descendant
+combinators are actually defined: they describe a relationship going
+<em>up</em> the tree from the element being styled, never down.</p>
+
+<h2 data-num="05">Limits / What You Cannot Do Yet</h2>
+<div class="compare-grid">
+  <div class="compare-col cant">
+    <h4>Can't do yet</h4>
+    <ul>
+      <li>Decide which of several matching rules WINS on a conflicting property (Module 9)</li>
+      <li>Match child/sibling combinators (Module 7 doesn't parse them, so this module never sees them)</li>
+      <li>Match pseudo-classes like <code>:hover</code> (not parsed by Module 7)</li>
+    </ul>
+  </div>
+  <div class="compare-col can">
+    <h4>Can do now</h4>
+    <ul>
+      <li>Correctly match compound selectors (type + class + id, ANDed)</li>
+      <li>Correctly match descendant-combinator chains by walking real ancestors</li>
+      <li>Correctly NOT match a selector against a node's descendants when the selector targets the node's ancestor, not the node itself</li>
+    </ul>
+  </div>
+</div>
+
+<h2 data-num="06">Run It</h2>
+<pre><code class="language-bash">cd 08_selector_matching
+python selector_matching.py</code></pre>
+<p>Exact output from a real run, unedited:</p>
+<pre><code>======================================================================
+Matching each node against the full parsed rule list
+======================================================================
+&lt;a class=active&gt; (inside &lt;nav&gt;): 3 rules matched -> ['nav a.active', 'nav a', '*']
+&lt;a&gt; (no class, inside &lt;nav&gt;): 2 rules matched -> ['nav a', '*']
+&lt;div class='card featured' id='hero'&gt;: 3 rules matched -> ['*.card', '*#hero', '*']
+&lt;p&gt; (inside the div, but not itself styled by .card/#hero): 2 rules matched -> ['p', '*']
+
+======================================================================
+Checks
+======================================================================
+active link matches 3 rules (nav a.active, nav a, *): True
+plain link matches 2 rules (nav a, *) — NOT nav a.active: True
+hero div matches 3 rules (.card, #hero, *): True
+paragraph matches 2 rules (p, *) — NOT .card or #hero (single-compound selectors don't match descendants): True</code></pre>
+
+<div class="callout callout-trouble">
+<div class="callout-label">⚠ Getting a blank or broken result?</div>
+<ul>
+<li><strong>Every node seems to match every rule:</strong> check <code>matches_simple</code>'s early returns — an accidentally inverted condition there (returning <code>True</code> instead of <code>False</code> on mismatch) would make everything match.</li>
+<li><strong>Descendant selectors never match anything:</strong> confirm <code>_find_matching_ancestor</code> starts from <code>node.parent</code>, not <code>node</code> itself — starting from the node would let a selector match itself twice against the same compound.</li>
+</ul>
+</div>
+
+<h2 data-num="07">Brain Exercise</h2>
+<div class="callout callout-brain">
+<div class="callout-label">🧠 Think before you reveal</div>
+<p><strong>Why is it safe for <code>_find_matching_ancestor</code> to stop
+at the FIRST matching ancestor it finds, without checking whether a
+match further up would also work and picking a "better" one? What
+specific property of this course's selector support (established back in
+Module 7) makes that safe?</strong></p>
+<details>
+<summary>Reveal the answer</summary>
+<p>Because Module 7 only parses the descendant combinator, every
+ancestor of a given node lies on one single, non-branching chain up to
+the document root. Any ancestor further up that chain which matches an
+even-earlier compound selector is, by simple transitivity of "is an
+ancestor of," <em>also</em> an ancestor of every closer-matching node
+below it on that same chain — so picking the closest match can never rule
+out a valid selector that a farther match would have completed. This
+stops being true the moment child (<code>&gt;</code>) or sibling
+(<code>+</code>, <code>~</code>) combinators enter the picture, because
+those introduce real branching choices where the nearest match genuinely
+might be a dead end — which is exactly why real browser engines need
+backtracking (or smarter indexed matching) once those combinators are
+supported, and why DECISIONS.md calls this out as a provable consequence
+of a scope limitation, not a coincidence.</p>
+</details>
+</div>
+
+<h2 data-num="08">There Are No Dumb Questions</h2>
+
+<div class="qa-item">
+<div class="qa-q">Why does matching start from the node and work UPWARD toward the root, instead of starting at the root and searching DOWNWARD for a match?</div>
+<div class="qa-a">Performance, primarily — and it compounds. A browser calls this matching logic for every rule against every node on the page. Starting at the specific node and checking the cheapest, most identifying thing first (does this element itself match the last compound?) lets almost every non-matching rule get rejected in one check, before any tree-walking happens at all. Starting from the root and searching down would mean exploring huge swaths of the tree for rules that were never going to match this node anyway.</div>
+</div>
+
+<div class="qa-item">
+<div class="qa-q">If <code>.card</code> doesn't match the <code>&lt;p&gt;</code> inside a <code>div class="card"</code>, how would you write a selector that DOES reach that paragraph?</div>
+<div class="qa-a"><code>.card p</code> — a two-part descendant selector, exactly like <code>nav a.active</code>. A bare <code>.card</code> is a one-part selector; it only ever describes the element that itself carries the class, never anything nested inside it. This distinction — one compound vs. a chain of compounds — is the entire reason `.card` and `.card p` produce different matches in this module's test.</div>
+</div>
+
+<div class="qa-item">
+<div class="qa-q">Could a node match the same rule through two different selectors in its comma group at once?</div>
+<div class="qa-a">Yes, and `matches_rule`'s `any(...)` handles that correctly — it only needs one selector in the group to match; it doesn't need to know or care if more than one did. Module 9 also only cares that the rule matched at all, not how many of its selectors did.</div>
+</div>
+
+<h2 data-num="09">What's Next</h2>
+<p>Every node in this module's demo matched more than one rule at once —
+the active link matched three. Real pages have this constantly: many
+rules apply to the same element, and they don't always agree. Module 9
+builds the algorithm that picks exactly one winning value per property
+when that happens.</p>
+
+<div class="module-nav">
+  <a href="../07_css_parser/tutorial.html"><span class="dir">← Previous</span>Module 7: CSS Tokenizer &amp; Parser</a>
+  <a class="next" href="../09_cascade/tutorial.html"><span class="dir">Next →</span>Module 9: The Cascade</a>
+</div>
+
+</body>
+</html>
