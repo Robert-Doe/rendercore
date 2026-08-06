@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Module 18 — A Toy JS Interpreter | Build a Browser From Scratch</title>
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body style="--accent:#a855f7; --accent-soft:rgba(168,85,247,0.12);">
+
+<div class="course-header">
+  <span class="module-badge">MODULE 18</span>
+  <span class="track-tag">Track 2 · The Browser Application</span>
+  <h1>A Toy <span class="accent">JS Interpreter</span></h1>
+  <p class="subtitle">This module builds a language that has never heard of a webpage. That's not a limitation — it's the honest architecture of how JavaScript actually relates to the DOM.</p>
+</div>
+
+<span class="decisions-badge">📄 Companion doc: <a href="DECISIONS.md">DECISIONS.md</a> · Source: <a href="js_interpreter.py">js_interpreter.py</a></span>
+
+<h2 data-num="00">Prerequisites</h2>
+<div class="prereq-links">
+  <a class="prereq-tag" href="../prereqs/state_machines.html">State Machines</a>
+  <a class="prereq-tag" href="../prereqs/trees_and_recursion.html">Trees &amp; Recursive Traversal</a>
+</div>
+
+<h2 data-num="01">The Big Analogy</h2>
+<div class="callout callout-analogy">
+<div class="callout-label">🍽️ The Restaurant, continued</div>
+<p>This module builds a calculator that can also follow multi-step
+instructions and remember things — genuinely useful on its own, sitting
+on a counter, with no idea a restaurant exists around it. It doesn't
+know about tables, orders, or plates. What makes it USEFUL to the
+restaurant is entirely a later decision: someone chooses to hand it
+specific numbers from specific orders and read specific results back.
+Building the calculator and wiring it into restaurant operations are two
+different jobs — this module is only the first one.</p>
+</div>
+
+<h2 data-num="02">What Happens, Step by Step</h2>
+<ol class="step-list">
+<li><strong>Tokenize:</strong> turn source text into numbers, strings, identifiers, keywords, and operators — the same state-machine-style scanning idea as Module 5, applied to a different grammar.</li>
+<li><strong>Parse:</strong> build a tree (an AST) via recursive descent, one method per precedence level, so <code>2 + 3 * 4</code> naturally groups as <code>2 + (3 * 4)</code>.</li>
+<li><strong>Evaluate statements</strong> by walking the tree: a <code>VarDecl</code> declares a variable in the current scope; an <code>If</code> evaluates its condition and executes one branch; a <code>For</code> runs its init once, then loops while its condition holds.</li>
+<li><strong>Evaluate expressions</strong> recursively: a <code>BinOp</code> evaluates both sides, then applies the operator; a <code>Call</code> evaluates the callee and arguments, then runs the function's body in a NEW scope.</li>
+<li>That new scope's PARENT is the function's <strong>closure environment</strong> — the scope it was originally defined in, not the scope it's being called from. This one detail is the entire reason closures work correctly.</li>
+</ol>
+
+<h2 data-num="03">A Map of a Closure</h2>
+<div class="diagram-box">
+<div class="kv-diagram">
+  function makeCounter() {
+    let n = 0;
+    function increment() { n = n + 1; return n; }
+    return increment;
+  }
+  let counter1 = makeCounter();   // call #1 to makeCounter
+  let counter2 = makeCounter();   // call #2 to makeCounter — a SEPARATE call
+
+  makeCounter call #1 creates env_A { n: 0 }
+    increment's closure_env = env_A
+    returns the increment FUNCTION VALUE (with env_A attached)
+  counter1 = that function, remembering env_A forever
+
+  makeCounter call #2 creates env_B { n: 0 }   <- a DIFFERENT n!
+    counter2 = increment remembering env_B
+
+  counter1();  ->  call_env's parent = env_A  ->  env_A.n becomes 1
+  counter1();  ->  env_A.n becomes 2
+  counter1();  ->  env_A.n becomes 3   ->  returns 3
+
+  counter2();  ->  call_env's parent = env_B  ->  env_B.n becomes 1
+               ->  returns 1   (env_B was NEVER touched by counter1 at all)
+</div>
+<p class="diagram-caption">two calls to the SAME function created two SEPARATE environments — that separation is what closures actually are</p>
+</div>
+
+<h2 data-num="04">The Code, Explained</h2>
+
+<p>The single line that makes closures work — get this wrong and every
+closure in every JS program ever run through this interpreter breaks:</p>
+<div class="filename">js_interpreter.py</div>
+<pre><code class="language-python">def eval_Call(self, e, env):
+    callee = self.eval_expr(e.callee, env)
+    args = [self.eval_expr(a, env) for a in e.args]
+    if isinstance(callee, Function):
+        call_env = Environment(callee.closure_env)   # <- NOT `env` (the caller's scope)
+        for param, arg in zip(callee.params, args):
+            call_env.declare(param, arg)</code></pre>
+<p><code>callee.closure_env</code> was captured back when the function
+was DEFINED (in <code>exec_FunctionDecl</code>, <code>env</code> at that
+moment becomes <code>closure_env</code>). Using the CALLING code's
+<code>env</code> instead here — an easy mistake to make, since
+<code>env</code> is right there and looks like the obvious choice — would
+implement "dynamic scoping" instead of the lexical scoping real
+JavaScript actually has, and this module's two-independent-counters test
+would fail immediately.</p>
+
+<p>Recursion works with zero special-casing, because a function calling
+itself is just... a function call, evaluated the same way as any other:</p>
+<div class="filename">js_interpreter.py</div>
+<pre><code class="language-python">return n * factorial(n - 1);
+# factorial is just an Ident lookup -> a Function value -> eval_Call runs it,
+# same code path as calling any other function</code></pre>
+
+<h2 data-num="05">Limits / What You Cannot Do Yet</h2>
+<div class="compare-grid">
+  <div class="compare-col cant">
+    <h4>Can't do yet</h4>
+    <ul>
+      <li>Objects, arrays, or <code>.</code>/<code>[]</code> property access</li>
+      <li><code>++</code>/<code>--</code> — write <code>i = i + 1</code> instead</li>
+      <li>JS-style loose <code>==</code> type coercion — this interpreter's <code>==</code> behaves like real JS's <code>===</code></li>
+      <li>Anything resembling the DOM — this interpreter has never heard of an element</li>
+    </ul>
+  </div>
+  <div class="compare-col can">
+    <h4>Can do now</h4>
+    <ul>
+      <li>Run real recursive functions correctly</li>
+      <li>Run real, independent closures correctly — the hardest thing to get right in this module</li>
+      <li>Correct operator precedence for arithmetic, comparison, and logical expressions</li>
+      <li>Correct scoping for <code>let</code>/<code>var</code>, blocks, loops, and function parameters</li>
+    </ul>
+  </div>
+</div>
+
+<h2 data-num="06">Run It</h2>
+<pre><code class="language-bash">cd 18_toy_js_interpreter
+python js_interpreter.py</code></pre>
+<p>Exact output from a real run, unedited:</p>
+<pre><code>======================================================================
+Interpreter output (via the JS program's own print() calls)
+======================================================================
+  720
+  55
+  5
+  Hello, World!
+  3
+  1
+
+======================================================================
+Checks
+======================================================================
+factorial(6) == 720 (recursion works): True
+sum of 1..10 via a for-loop == 55: True
+while loop counted to 5: True
+string concatenation: True
+counter1 called 3 times total, shows 3: True
+counter2 is an INDEPENDENT closure, starts fresh at 1 (not affected by counter1's calls): True</code></pre>
+
+<div class="callout callout-trouble">
+<div class="callout-label">⚠ Getting a blank or broken result?</div>
+<ul>
+<li><strong>Both counters share state (counter2 shows 4, not 1):</strong> check `call_env`'s parent is `callee.closure_env`, not the caller's `env` — this is THE bug this whole module is designed to make visible.</li>
+<li><strong><code>NameError</code> on a variable that should exist:</strong> check the relevant scope actually called `declare()` — a common mistake is calling `set_existing()` (which requires the variable to already exist somewhere) where `declare()` (which creates it) was needed.</li>
+<li><strong><code>SyntaxError: unexpected token</code>:</strong> the tokenizer doesn't support every JS syntax form — check DECISIONS.md's scope-out list before assuming it's a bug.</li>
+</ul>
+</div>
+
+<h2 data-num="07">Brain Exercise</h2>
+<div class="callout callout-brain">
+<div class="callout-label">🧠 Think before you reveal</div>
+<p><strong>If <code>eval_Call</code> used <code>Environment(env)</code>
+(the CALLER's scope) instead of <code>Environment(callee.closure_env)</code>,
+would <code>factorial</code>'s recursion still work correctly? Would the
+two-counters test still pass? Are these the same question?</strong></p>
+<details>
+<summary>Reveal the answer</summary>
+<p>They're NOT the same question, and that's the interesting part.
+<code>factorial</code> would still work fine even with the "wrong"
+(caller's-env) version — because every call to `factorial` happens from
+inside code that already has `factorial` itself in scope (it's a global
+function, visible everywhere), so which environment gets used as the
+parent doesn't actually change what's visible to the function body in
+this particular case. The two-counters test would break immediately,
+though: `increment`'s whole purpose is to see the SPECIFIC `n` that
+existed at ITS OWN definition site inside one particular call to
+`makeCounter` — using the caller's environment instead would have
+`counter1()` and `counter2()` both look up `n` wherever they happen to be
+CALLED from (both from the global scope, in this test), finding no `n`
+there at all, or the wrong one if one happened to exist. This is exactly
+why a bug like this can hide for a long time in real code: many ordinary
+function calls don't exercise the distinction between lexical and dynamic
+scoping at all — only closures, which capture and depend on a SPECIFIC
+enclosing scope, expose it.</p>
+</details>
+</div>
+
+<h2 data-num="08">There Are No Dumb Questions</h2>
+
+<div class="qa-item">
+<div class="qa-q">Why does this interpreter's `==` behave differently from real JavaScript's?</div>
+<div class="qa-a">Real JS's `==` performs a genuinely complex set of implicit type conversions before comparing — famous, widely-mocked examples include `[] == false` being `true`. Implementing that table correctly would be real, non-trivial work for a comparison operator most style guides tell working JS developers to avoid using anyway (in favor of `===`). This interpreter's `==` simply behaves like `===` always — a named, deliberate simplification, not an attempt at spec accuracy.</div>
+</div>
+
+<div class="qa-item">
+<div class="qa-q">Why implement `return` using a Python exception instead of some other mechanism?</div>
+<div class="qa-a">Because `return` needs to unwind out of however many nested blocks it's inside — potentially several `if`/`while`/`for` bodies deep — immediately, back to the function call site. Python's own exception propagation already does exactly this kind of "unwind through arbitrarily nested calls until something catches it" behavior, so reusing it avoids threading a manual "has this function returned yet?" signal through every single statement-execution method.</div>
+</div>
+
+<div class="qa-item">
+<div class="qa-q">Could this interpreter be extended to support objects and arrays later?</div>
+<div class="qa-a">Yes, and the shape of the extension is fairly predictable: a new AST node for object/array literals, a new AST node for `.`/`[]` access (parsed at the same precedence level as function calls in `parse_call`), and a Python dict or list as the runtime representation. It's real work, not a small tweak — which is exactly why DECISIONS.md names it as the largest scope-out in this module rather than something trivially bolted on.</div>
+</div>
+
+<h2 data-num="09">What's Next</h2>
+<p>This interpreter can run real programs, but it has no way to see or
+change a web page — <code>print()</code> is its only connection to the
+outside world. Module 19 builds the bridge: specific, controlled hooks
+that let a script running through this exact interpreter read and mutate
+the real DOM from Module 6.</p>
+
+<div class="module-nav">
+  <a href="../17_event_loop/tutorial.html"><span class="dir">← Previous</span>Module 17: The Event Loop</a>
+  <a class="next" href="../19_dom_js_bindings/tutorial.html"><span class="dir">Next →</span>Module 19: DOM–JS Bindings</a>
+</div>
+
+</body>
+</html>
