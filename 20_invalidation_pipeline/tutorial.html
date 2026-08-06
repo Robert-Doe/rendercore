@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Module 20 — Invalidation &amp; Re-render Pipeline | Build a Browser From Scratch</title>
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body style="--accent:#e879f9; --accent-soft:rgba(232,121,249,0.12);">
+
+<div class="course-header">
+  <span class="module-badge">MODULE 20</span>
+  <span class="track-tag">Track 2 · The Browser Application</span>
+  <h1>Invalidation <span class="accent">&amp; Re-render Pipeline</span></h1>
+  <p class="subtitle">A page with a thousand elements changes one word. Redoing all thousand would be correct — and unacceptably wasteful.</p>
+</div>
+
+<span class="decisions-badge">📄 Companion doc: <a href="DECISIONS.md">DECISIONS.md</a> · Source: <a href="invalidation.py">invalidation.py</a></span>
+
+<h2 data-num="00">Prerequisites</h2>
+<div class="prereq-links">
+  <a class="prereq-tag" href="../11_block_inline_layout/tutorial.html">Module 11: Block &amp; Inline Layout</a>
+  <a class="prereq-tag" href="../19_dom_js_bindings/tutorial.html">Module 19: DOM–JS Bindings</a>
+</div>
+
+<h2 data-num="01">The Big Analogy</h2>
+<div class="callout callout-analogy">
+<div class="callout-label">🍽️ The Restaurant, continued</div>
+<p>One dish on one table gets a bigger portion added mid-service. The
+head chef doesn't re-plate the entire dining room — they check: does this
+table's own tray have a FIXED size regardless of what's on it (say, a
+rigid serving board), or does the tray itself grow to fit its
+contents? If the tray is fixed-size, the chef knows the growth stops
+right there — nothing about any OTHER table needs to be touched at all,
+because nothing about them could possibly have changed. If the tray
+itself would need to grow, the chef has to check the NEXT container out,
+and the next, until they find one that's fixed. That boundary — the
+first fixed container, checked outward from the change — is exactly
+what this module computes.</p>
+</div>
+
+<h2 data-num="02">What Happens, Step by Step</h2>
+<ol class="step-list">
+<li>A script (Module 19) mutates something about one DOM node's computed style — here, its <code>height</code>.</li>
+<li>Walk UP from that node's PARENT (never the node itself — see section 07) looking for the nearest ancestor with an EXPLICIT height.</li>
+<li>That ancestor is the relayout boundary: its own size is guaranteed unaffected by anything inside it, so it's safe to stop propagating the search there.</li>
+<li>Re-run Module 11's ordinary <code>layout_block</code> — unmodified — starting FROM that boundary, using its already-known containing block.</li>
+<li>Splice the resulting new subtree back into the existing layout tree at the correct position. Everything else in the tree is left completely, literally untouched.</li>
+<li>Regenerate a display list for just that subtree (Module 14, unmodified) — ready to be spliced into the canvas.</li>
+</ol>
+
+<h2 data-num="03">A Map of the Boundary Search</h2>
+<div class="diagram-box">
+<div class="kv-diagram">
+  body (auto height)
+   ├── #sidebar (auto height)            <- UNTOUCHED branch
+   │     └── #sidebar_item (height:80px)
+   └── #main (height: 300px EXPLICIT)     <- BOUNDARY: found here
+         └── #target (height: 50px -> 150px, MUTATED)
+
+  search starts at #target.parent = #main
+    #main has EXPLICIT height -> STOP, this is the boundary
+
+  re-layout runs ONLY on: #main, #target
+  never touched: body, #sidebar, #sidebar_item
+
+  PROOF: sidebar_layout_after IS sidebar_layout_before   (same object!)
+</div>
+<p class="diagram-caption">the search stops at the FIRST ancestor whose own size can't be affected — not at the DOM root</p>
+</div>
+
+<h2 data-num="04">The Code, Explained</h2>
+
+<p>The boundary search, and the identity check that proves it worked:</p>
+<div class="filename">invalidation.py</div>
+<pre><code class="language-python">current = node.parent      # NEVER start at `node` itself — see section 07
+while current is not None:
+    style = styles.get(id(current), {})
+    if style.get("height", "auto") != "auto":
+        return current      # found a safe stopping point
+    current = current.parent</code></pre>
+
+<div class="filename">invalidation.py (the proof)</div>
+<pre><code class="language-python">sidebar_layout_v2 is sidebar_layout_v1   # True — LITERALLY the same object,
+                                            # never recomputed, not just
+                                            # coincidentally equal</code></pre>
+
+<h2 data-num="05">Limits / What You Cannot Do Yet</h2>
+<div class="compare-grid">
+  <div class="compare-col cant">
+    <h4>Can't do yet</h4>
+    <ul>
+      <li>Splice specific real canvas items in/out of a live Tkinter canvas — demonstrated at the display-list level only</li>
+      <li>Handle mutations that themselves change WHICH properties are inherited (Module 9's cascade isn't re-triggered here — only layout is)</li>
+      <li>Batch multiple mutations in the same tick into one combined re-layout</li>
+    </ul>
+  </div>
+  <div class="compare-col can">
+    <h4>Can do now</h4>
+    <ul>
+      <li>Correctly identify the smallest safe subtree to re-layout after a mutation</li>
+      <li>Prove — by object identity, not just matching output — that unaffected subtrees are never recomputed</li>
+      <li>Regenerate a correct, smaller display list for just the changed subtree</li>
+    </ul>
+  </div>
+</div>
+
+<h2 data-num="06">Run It</h2>
+<pre><code class="language-bash">cd 20_invalidation_pipeline
+python invalidation.py</code></pre>
+<p>Exact output from a real run, unedited (after the boundary-search bug in section 07 was found and fixed):</p>
+<pre><code>relayout boundary found by walking up from #target: #main
+found generically by find_relayout_boundary() — this test asserts it's #main below, it isn't hardcoded here: boundary is main_node = True
+
+======================================================================
+Checks
+======================================================================
+#target's NEW content_height reflects the mutation (150): True
+#main's OWN content_height is STILL 300 (explicit — the child's growth did not change it, which is WHY it's a safe boundary): True
+#sidebar's LayoutBox is the LITERAL SAME OBJECT as before the mutation — never recomputed at all (proven by identity, not just equal values): True
+#sidebar_item (nested inside the untouched #sidebar) is ALSO the literal same object as before — the identity guarantee holds recursively down the whole untouched subtree: True
+
+======================================================================
+Partial RE-PAINT: regenerate a display list for ONLY the
+boundary subtree — #sidebar's paint commands are never rebuilt
+======================================================================
+  DrawRect((0,80) 400x300, white)
+  DrawRect((0,80) 400x150, red)
+
+the re-painted #target rectangle reflects the new 150px height: True
+only 2 draw commands were regenerated (main + target), NOT the whole page: True</code></pre>
+
+<div class="callout callout-trouble">
+<div class="callout-label">⚠ Getting a blank or broken result?</div>
+<ul>
+<li><strong>Boundary search returns the mutated node itself:</strong> this exact bug happened during development — check the search starts at <code>node.parent</code>, not <code>node</code>.</li>
+<li><strong>Identity checks fail (objects don't match):</strong> confirm the splice step only replaces the boundary's entry in its parent's `.children` list — accidentally rebuilding the WHOLE tree and comparing against a fresh copy would break every identity check, even for genuinely-unaffected nodes.</li>
+</ul>
+</div>
+
+<h2 data-num="07">Brain Exercise</h2>
+<div class="callout callout-brain">
+<div class="callout-label">🧠 Think before you reveal</div>
+<p><strong>This module's own first version searched for a boundary
+starting AT the mutated node, not its parent — and returned the mutated
+node itself as "the boundary" every time. Walk through exactly what
+`layout_block(target_node, ...)` alone — with no connection to `#main`
+at all — would and wouldn't correctly compute, and why that's not
+sufficient.</strong></p>
+<details>
+<summary>Reveal the answer</summary>
+<p>Laying out `#target` in isolation WOULD correctly compute its own new
+content height (150px) — that part works fine on its own. But it has no
+way to know `#main`'s content width to use as a containing block (it
+would need that passed in from somewhere), and critically, re-laying-out
+`#target` alone does nothing to update `#main`'s awareness that its
+child grew — if `#main` had auto height instead of explicit, `#main`'s
+OWN height would need to change too, and nothing about re-laying-out
+`#target` alone would ever discover or apply that. The whole reason the
+search needs to go to the PARENT and check ITS height is to answer a
+question `#target` itself cannot answer about itself: "does my growth
+ripple outward, and if so, how far?" A node genuinely cannot determine
+its own blast radius — only something walking outward from it can.</p>
+</details>
+</div>
+
+<h2 data-num="08">There Are No Dumb Questions</h2>
+
+<div class="qa-item">
+<div class="qa-q">What happens if NO ancestor has an explicit height — does the algorithm break?</div>
+<div class="qa-a">No — `find_relayout_boundary`'s loop falls through to `last_seen`, the topmost ancestor reached, which correctly (if conservatively) means "re-layout the whole page." This is exactly the safe, correct fallback: worse-case performance, never worse-case CORRECTNESS. A real browser's actual relayout-boundary logic has more nuance (certain CSS properties like `contain` or `overflow` can also create boundaries), but "explicit height" alone is a real, valid instance of the same underlying idea.</div>
+</div>
+
+<div class="qa-item">
+<div class="qa-q">Why does this module check `#main`'s height stayed exactly 300, instead of just checking `#target`'s new height?</div>
+<div class="qa-a">Because checking only `#target`'s new value would prove the mutation "worked," but not prove the BOUNDARY CHOICE was safe. Confirming `#main`'s own height is unchanged is the concrete, checkable version of the abstract claim "an explicit height means this ancestor can't be affected by its children" — turning a design assumption into a verified fact about this specific run.</div>
+</div>
+
+<div class="qa-item">
+<div class="qa-q">Is checking object identity (`is`) overkill compared to just checking the values look right?</div>
+<div class="qa-a">For THIS module's specific claim — "was this subtree recomputed at all" — value-equality checks are actually insufficient, not just less elegant. A completely rebuilt-from-scratch `#sidebar` that happens to produce identical numbers would pass a value check while still representing exactly the wasted work this module exists to avoid. Identity is the only check that distinguishes "correctly reused" from "recomputed to the same answer."</div>
+</div>
+
+<h2 data-num="09">What's Next</h2>
+<p>Every piece of the rendering and scripting engine now exists. Module
+21 wraps it in the part that actually makes it feel like "a browser" —
+an address bar, tabs, and back/forward navigation history sitting
+outside any single page.</p>
+
+<div class="module-nav">
+  <a href="../19_dom_js_bindings/tutorial.html"><span class="dir">← Previous</span>Module 19: DOM–JS Bindings</a>
+  <a class="next" href="../21_chrome_ui/tutorial.html"><span class="dir">Next →</span>Module 21: Chrome UI</a>
+</div>
+
+</body>
+</html>
