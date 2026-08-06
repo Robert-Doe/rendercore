@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Module 13 — Stacking &amp; a Flexbox Subset | Build a Browser From Scratch</title>
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body style="--accent:#f59e0b; --accent-soft:rgba(245,158,11,0.12);">
+
+<div class="course-header">
+  <span class="module-badge">MODULE 13</span>
+  <span class="track-tag">Track 1 · Phase 3: From Tree to Geometry</span>
+  <h1>Stacking <span class="accent">&amp; a Flexbox Subset</span></h1>
+  <p class="subtitle">Two questions normal block flow never has to answer: how should leftover space be shared, and who paints on top of whom?</p>
+</div>
+
+<span class="decisions-badge">📄 Companion doc: <a href="DECISIONS.md">DECISIONS.md</a> · Source: <a href="flex_and_stacking.py">flex_and_stacking.py</a></span>
+
+<h2 data-num="00">Prerequisites</h2>
+<div class="prereq-links">
+  <a class="prereq-tag" href="../09_cascade/tutorial.html">Module 9: The Cascade</a>
+  <a class="prereq-tag" href="../11_block_inline_layout/tutorial.html">Module 11: Block &amp; Inline Layout</a>
+</div>
+
+<h2 data-num="01">The Big Analogy</h2>
+<div class="callout callout-analogy">
+<div class="callout-label">🍽️ The Restaurant, continued</div>
+<p><strong>Flexbox</strong> is a caterer with a fixed-length buffet table
+and dishes of different declared "importance" — a dish marked
+"importance 2" gets served twice as much of whatever extra table space is
+left over as a dish marked "importance 1." A dish marked "importance 0"
+gets exactly the space it asked for and not one inch more, no matter how
+much table is left empty.</p>
+<p><strong>Stacking</strong> is a completely different question: when two
+plates physically overlap on the table, which one is on top? The kitchen
+doesn't just go by which plate was set down first (order of arrival) —
+each plate can carry an explicit "stack me higher" priority tag, and only
+when two plates have the exact same tag does arrival order settle it.</p>
+</div>
+
+<h2 data-num="02">What Happens, Step by Step</h2>
+<ol class="step-list">
+<li><strong>Flex:</strong> sum every item's basis (declared) width. Subtract that from the container's width to get the free space.</li>
+<li>Sum every item's <code>flex-grow</code> value.</li>
+<li>For each item, its share of the free space is <code>free_space × (its flex-grow ÷ total flex-grow)</code> — zero if <code>flex-grow</code> is 0, or if nothing in the row grows at all.</li>
+<li>Place items left to right, each one's width equal to its basis plus its share.</li>
+<li><strong>Stacking:</strong> assign every overlapping element its z-index (or treat "auto" as 0) and its position in document order.</li>
+<li>Sort by z-index first — lowest painted first (furthest back). Only when z-index ties does document order decide, later-in-document painting on top.</li>
+</ol>
+
+<h2 data-num="03">A Map of Both Algorithms</h2>
+<div class="diagram-box">
+<div class="kv-diagram">
+FLEX — container width 600, basis 100/100/100, grow 1:2:1
+
+  total_basis = 300      free_space = 600 - 300 = 300     total_grow = 4
+  left:   extra = 300 * 1/4 =  75   ->  width = 175
+  center: extra = 300 * 2/4 = 150   ->  width = 250
+  right:  extra = 300 * 1/4 =  75   ->  width = 175
+                                        175 + 250 + 175 = 600 (exact)
+
+STACKING — sort key (z_index, tree_order), z_index dominant
+
+  items:  A(z=2,#0)  B(z=auto,#1)  C(z=-1,#2)  D(z=2,#3)  E(z=0,#4)
+
+  sorted: C(z=-1) < B(z=0,#1) < E(z=0,#4) < A(z=2,#0) < D(z=2,#3)
+          \_______/  \_____________________/  \_______________/
+          most negative    z=0 GROUP, tied      z=2 GROUP, tied
+          z first            -> DOM order         -> DOM order
+                               breaks it            breaks it
+</div>
+<p class="diagram-caption">flex distributes SPACE proportionally; stacking distributes PAINT ORDER, z-index-first</p>
+</div>
+
+<h2 data-num="04">The Code, Explained</h2>
+
+<p>Flex's entire distribution formula is one line, and it's a straight
+ratio — not a boolean "does it grow":</p>
+<div class="filename">flex_and_stacking.py</div>
+<pre><code class="language-python">extra = (free_space * item.flex_grow / total_grow) if total_grow > 0 else 0.0</code></pre>
+
+<p>Stacking's entire ordering rule is one sort key, structurally
+identical to Module 9's cascade tie-break — z first, document order only
+as the tie-breaker:</p>
+<div class="filename">flex_and_stacking.py</div>
+<pre><code class="language-python">def sort_key(item):
+    z = item.z_index if item.z_index is not None else 0
+    return (z, item.tree_order)</code></pre>
+
+<h2 data-num="05">Limits / What You Cannot Do Yet</h2>
+<div class="compare-grid">
+  <div class="compare-col cant">
+    <h4>Can't do yet</h4>
+    <ul>
+      <li>Column-direction flex, wrapping, or <code>flex-shrink</code></li>
+      <li>Flex-basis falling back to content size (needs Module 12's text measurement wired in)</li>
+      <li>Real nested stacking contexts (an element creating its own independent z-index scope)</li>
+    </ul>
+  </div>
+  <div class="compare-col can">
+    <h4>Can do now</h4>
+    <ul>
+      <li>Correctly distribute free space proportionally to flex-grow</li>
+      <li>Correctly leave items at their basis width when nothing grows</li>
+      <li>Correctly order overlapping elements for paint by z-index, with correct document-order tie-breaking</li>
+    </ul>
+  </div>
+</div>
+
+<h2 data-num="06">Run It</h2>
+<pre><code class="language-bash">cd 13_flexbox_stacking
+python flex_and_stacking.py</code></pre>
+<p>Exact output from a real run, unedited:</p>
+<pre><code>PART A, CASE 1 — three items, flex-grow 1:2:1, extra space split proportionally
+  left     x=   0.0  width= 175.0
+  center   x= 175.0  width= 250.0
+  right    x= 425.0  width= 175.0
+
+widths sum to exactly the container width (600): True
+'center' (grow=2) got exactly twice the extra space of 'left'/'right' (grow=1 each): True
+
+PART A, CASE 2 — flex-grow all 0: items DON'T stretch to fill the container
+  a        x=   0.0  width= 100.0
+  b        x= 100.0  width= 100.0
+  c        x= 200.0  width= 100.0
+
+no item grew past its basis width (100) despite 300px of unused space in a 600px container: True
+
+PART B — paint order: z-index overrides document order, ties broken BY document order
+  paint step 0: C (z=-1, 3rd in DOM)
+  paint step 1: B (z=auto, 2nd in DOM)
+  paint step 2: E (z=0, 5th in DOM)
+  paint step 3: A (z=2, 1st in DOM)
+  paint step 4: D (z=2, 4th in DOM)
+
+C (z=-1) painted FIRST despite being 3rd in the DOM: True
+B (z=auto/0) painted before E (z=0) — DOM order breaks the z=0 tie: True
+A (z=2) painted before D (z=2) — DOM order breaks the z=2 tie: True
+Both z=2 items (A, D) painted LAST — on top of everything else: True</code></pre>
+
+<div class="callout callout-trouble">
+<div class="callout-label">⚠ Getting a blank or broken result?</div>
+<ul>
+<li><strong>All flex items get equal extra space regardless of flex-grow:</strong> check the formula uses `item.flex_grow / total_grow`, not just splitting `free_space` evenly across the item count.</li>
+<li><strong>Paint order matches document order even with different z-index values:</strong> check the sort key tuple has `z` FIRST — `(tree_order, z)` would sort by document order first and silently ignore z-index almost entirely.</li>
+</ul>
+</div>
+
+<h2 data-num="07">Brain Exercise</h2>
+<div class="callout callout-brain">
+<div class="callout-label">🧠 Think before you reveal</div>
+<p><strong>Suppose `free_space` were NEGATIVE — the items' total basis
+width is larger than the container (they overflow). What does
+`layout_flex_row`'s current code actually do in that case, and is it
+correct real flexbox behavior?</strong></p>
+<details>
+<summary>Reveal the answer</summary>
+<p><code>free_space = max(0.0, container_width - total_basis)</code>
+clamps it to exactly <code>0.0</code> whenever basis exceeds the
+container — so every item simply keeps its basis width, and the row
+overflows the container rather than the code producing a negative extra
+value (which would incorrectly SHRINK items that have a positive
+flex-grow but no flex-shrink logic to apply). This happens to avoid a
+crash or nonsensical negative width, but it is NOT full flexbox
+correctness: real flexbox has `flex-shrink` specifically to handle this
+overflow case by proportionally shrinking items, which this module
+explicitly does not implement (see DECISIONS.md, Part A). So: safe, but
+incomplete — exactly the kind of distinction this course's "Limits"
+sections exist to keep visible rather than papered over.</p>
+</details>
+</div>
+
+<h2 data-num="08">There Are No Dumb Questions</h2>
+
+<div class="qa-item">
+<div class="qa-q">Why are flexbox and stacking in the same module — aren't they unrelated?</div>
+<div class="qa-a">They're unrelated mechanically, but they share a category: both are things that happen OUTSIDE the block-stacking, top-to-bottom flow Module 11 builds. Flexbox is an alternative layout mode for arranging children; stacking is a paint-order concern that applies regardless of which layout mode positioned the elements. Grouping them acknowledges "not normal flow" as the connecting idea, while being honest in the code that they're two independent algorithms, not one shared one.</div>
+</div>
+
+<div class="qa-item">
+<div class="qa-q">Does a higher z-index always mean an element is "more visible"?</div>
+<div class="qa-a">It means an element paints LATER, which usually means more visible where it overlaps something with a lower z-index — but only within the same stacking context. This module's simplification (treating everything as one flat context) is exactly why DECISIONS.md flags nested stacking contexts as unimplemented: in real CSS, a z-index of 9999 inside one stacking context can still end up visually BELOW a z-index of 1 in a different, higher-level stacking context — a genuinely common source of real-world confusion this module doesn't yet model.</div>
+</div>
+
+<div class="qa-item">
+<div class="qa-q">Why does document order matter at all for stacking, if z-index is what really controls it?</div>
+<div class="qa-a">Because most real elements never set z-index explicitly — they're all effectively "auto"/0, tied with each other. Without a document-order tie-break, painting order for the vast majority of ordinary overlapping content (like normally-flowed elements that happen to overlap via negative margins) would be undefined. Document order as the tie-break is what makes "later in the HTML paints on top" the sensible, predictable default it is in real browsers.</div>
+</div>
+
+<h2 data-num="09">What's Next</h2>
+<p>Every geometry-producing module in Track 1 is now complete — trees,
+boxes, block positions, wrapped text, flex rows, and paint order are all
+real, working code. None of it has touched a single pixel yet. Module 14
+starts Phase 4 by flattening all of this into an ordered list of concrete
+draw commands.</p>
+
+<div class="module-nav">
+  <a href="../12_text_line_breaking/tutorial.html"><span class="dir">← Previous</span>Module 12: Text Layout &amp; Line Breaking</a>
+  <a class="next" href="../14_display_list/tutorial.html"><span class="dir">Next →</span>Module 14: Paint / Display List</a>
+</div>
+
+</body>
+</html>
