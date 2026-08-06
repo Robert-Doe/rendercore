@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Module 19 — DOM–JS Bindings | Build a Browser From Scratch</title>
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body style="--accent:#d946ef; --accent-soft:rgba(217,70,239,0.12);">
+
+<div class="course-header">
+  <span class="module-badge">MODULE 19</span>
+  <span class="track-tag">Track 2 · The Browser Application</span>
+  <h1>DOM–JS <span class="accent">Bindings</span></h1>
+  <p class="subtitle">The calculator from Module 18 finally gets handed something real to operate on.</p>
+</div>
+
+<span class="decisions-badge">📄 Companion doc: <a href="DECISIONS.md">DECISIONS.md</a> · Source: <a href="dom_bindings.py">dom_bindings.py</a></span>
+
+<h2 data-num="00">Prerequisites</h2>
+<div class="prereq-links">
+  <a class="prereq-tag" href="../06_dom_tree_builder/tutorial.html">Module 6: HTML Tree Builder</a>
+  <a class="prereq-tag" href="../18_toy_js_interpreter/tutorial.html">Module 18: A Toy JS Interpreter</a>
+</div>
+
+<h2 data-num="01">The Big Analogy</h2>
+<div class="callout callout-analogy">
+<div class="callout-label">🍽️ The Restaurant, continued</div>
+<p>The calculator (Module 18) is placed on the actual counter, and
+someone hands it a specific set of buttons wired to real kitchen
+actions: press this button and it looks up a specific plate by its ticket
+number; press that one and it actually changes what's written on that
+plate's label — for real, not on a copy. The calculator still doesn't
+"understand" the kitchen — it just has a fixed set of buttons that happen
+to be wired to real consequences now.</p>
+</div>
+
+<h2 data-num="02">What Happens, Step by Step</h2>
+<ol class="step-list">
+<li>Before running any script, hold a real Python reference to a specific DOM element (proving, later, that we're looking at the SAME object the script touched — not a fresh copy).</li>
+<li>Register a handful of Python functions — <code>getElementById</code>, <code>setText</code>, <code>setAttribute</code>, etc. — into the interpreter's global scope, exactly the way Module 18 registered <code>print</code>.</li>
+<li>Run a script that calls these functions by name — from the interpreter's point of view, they're indistinguishable from any other function.</li>
+<li><code>getElementById</code> returns the real <code>Element</code> object, not a copy — every subsequent binding call receives and mutates that same object.</li>
+<li>After the script finishes, read the ORIGINAL Python reference held in step 1 — if the mutations are real, they're visible there too, with zero re-fetching.</li>
+</ol>
+
+<h2 data-num="03">A Map of the Binding</h2>
+<div class="diagram-box">
+<div class="kv-diagram">
+  Python:  target = find_element_with_id("target")   <- a real reference, held BEFORE any script runs
+
+  JS:      let el = getElementById("target");
+                     \_____________________/
+                      Python function, called like any JS function
+                      returns the SAME object `target` points to
+
+  JS:      setText(el, "Updated by JS!");
+                    \___________________/
+                    mutates el.children DIRECTLY — `el` IS `target`
+
+  Python (AFTER the script, using the SAME `target` reference):
+           target.children   ->  [Text('Updated by JS!')]
+                                   ^^^^^^^^^^^^^^^^^^^^^^^
+                                   the mutation is visible here — proof
+                                   it was a REAL mutation, not a copy
+</div>
+<p class="diagram-caption">one object, two "sides" (Python and JS) touching it — that's the entire binding</p>
+</div>
+
+<h2 data-num="04">The Code, Explained</h2>
+
+<p>Registering a binding looks EXACTLY like registering <code>print</code>
+did in Module 18 — because it's the same mechanism, unmodified:</p>
+<div class="filename">dom_bindings.py</div>
+<pre><code class="language-python">def js_setText(el: Element, text: str) -> None:
+    el.children = [TextNode(text, parent=el)]
+
+interp.global_env.declare("setText", js_setText)</code></pre>
+<p>Nothing in Module 18's `eval_Call` needed to change to support this —
+it already accepted any Python callable:</p>
+<div class="filename">js_interpreter.py (Module 18, unmodified)</div>
+<pre><code class="language-python">if callable(callee):
+    return callee(*args)</code></pre>
+
+<h2 data-num="05">Limits / What You Cannot Do Yet</h2>
+<div class="compare-grid">
+  <div class="compare-col cant">
+    <h4>Can't do yet</h4>
+    <ul>
+      <li>Property syntax (<code>el.textContent = "..."</code>) — Module 18 has no <code>.</code> operator, so every binding is a plain function call</li>
+      <li><code>querySelector</code>, <code>removeChild</code>, or event listeners — Module 20's job</li>
+      <li>Trigger any re-layout or re-paint after a mutation — the render pipeline doesn't know anything changed yet</li>
+    </ul>
+  </div>
+  <div class="compare-col can">
+    <h4>Can do now</h4>
+    <ul>
+      <li>Look up a real DOM element by id from inside a running script</li>
+      <li>Read and mutate its text and attributes, with the mutation OBSERVABLE outside the script</li>
+      <li>Create new elements and actually append them into the real tree</li>
+    </ul>
+  </div>
+</div>
+
+<h2 data-num="06">Run It</h2>
+<pre><code class="language-bash">cd 19_dom_js_bindings
+python dom_bindings.py</code></pre>
+<p>Exact output from a real run, unedited:</p>
+<pre><code>BEFORE running any script — real DOM state:
+  target text: 'original text'
+  target attrs: {'id': 'target'}
+  target children count: 1
+
+Script's own print() output
+  original text
+  Updated by JS!
+  true
+  span
+
+AFTER running the script — reading the REAL DOM tree directly,
+NOT trusting the script's own printed output
+  target.attrs: {'id': 'target', 'data-touched': 'true'}
+  target.children: [Text('Updated by JS!'), <span>]
+
+======================================================================
+Checks — against the real Element object, not interp.output
+======================================================================
+script's first print() saw the ORIGINAL text: True
+the REAL target Element's attrs dict now contains data-touched=true (mutated by the SAME object reference held since before the script ran): True
+the REAL target Element now has a <span> CHILD, actually appended to its real .children list: True
+that real <span> child's real text content is correct: True</code></pre>
+
+<div class="callout callout-trouble">
+<div class="callout-label">⚠ Getting a blank or broken result?</div>
+<ul>
+<li><strong>The AFTER checks fail even though the script's own print() output looks right:</strong> this is the exact bug this module's design is meant to catch — check `getElementById` is returning the actual object (`return el`), not something derived from it (like a copy or a string summary).</li>
+<li><strong><code>LookupError: no element with id</code>:</strong> confirm the id you're searching for actually exists in the parsed HTML, and that `_find_by_id` is searching `Element` children, not skipping past `TextNode` siblings incorrectly.</li>
+</ul>
+</div>
+
+<h2 data-num="07">Brain Exercise</h2>
+<div class="callout callout-brain">
+<div class="callout-label">🧠 Think before you reveal</div>
+<p><strong>Suppose `js_getElementById` were written to return
+`Element(tag=el.tag, attrs=dict(el.attrs), children=list(el.children))` —
+a fresh COPY of the found element, instead of `el` itself. Which specific
+checks in this module's test would start failing, and which (if any)
+would keep passing?</strong></p>
+<details>
+<summary>Reveal the answer</summary>
+<p>The script's OWN <code>print()</code> output (checks against
+<code>interp.output</code>) would keep passing — the script would still
+see its own copy get updated correctly, because every binding call after
+`getElementById` would consistently operate on that same copy. But every
+check that inspects the ORIGINAL `target` reference held from before the
+script ran would fail: `target.attrs` would never gain
+`data-touched`, and `target.children` would never gain the new
+`<span>`, because none of the script's mutations would ever reach the
+real object sitting in the real DOM tree — only its disconnected copy.
+This is exactly why this module verifies against the pre-held reference
+instead of only checking the script's own output: a copy-based bug would
+be invisible to the first kind of check and only shows up in the second.</p>
+</details>
+</div>
+
+<h2 data-num="08">There Are No Dumb Questions</h2>
+
+<div class="qa-item">
+<div class="qa-q">Why does `setText` replace ALL children instead of trying to find and update just the existing text?</div>
+<div class="qa-a">Because that's what real DOM's `textContent` setter actually does — it's not a targeted edit, it's a full replacement. Matching that real behavior (rather than inventing a "smarter" partial-update version) means this binding's semantics are a recognizable subset of a real API, not something novel a learner would have to unlearn later.</div>
+</div>
+
+<div class="qa-item">
+<div class="qa-q">Is it a problem that these bindings are function calls instead of `el.property = value`?</div>
+<div class="qa-a">It's a real, honest simplification, not a hidden one — DECISIONS.md names it directly as a consequence of Module 18 not parsing `.`. If Module 18 were extended with property-access syntax later, these exact same Python functions could be re-exposed as property getters/setters with no change to their own logic — only to how the interpreter calls them.</div>
+</div>
+
+<div class="qa-item">
+<div class="qa-q">Why doesn't this module also make the page visually update when the script changes something?</div>
+<div class="qa-a">Because nothing in this course's pipeline yet knows a mutation happened — Modules 10-16 (layout through compositing) only ever ran ONCE, on the original DOM, and have no mechanism to notice a change and redo their work. That noticing-and-redoing mechanism is specifically what Module 20 builds next.</div>
+</div>
+
+<h2 data-num="09">What's Next</h2>
+<p>A script can now genuinely change the DOM — but the screen wouldn't
+reflect it, because nothing re-runs layout or paint afterward. Module 20
+builds the invalidation pipeline: the mechanism that notices a mutation
+happened and correctly redoes only the affected parts of Modules 9
+through 16's work.</p>
+
+<div class="module-nav">
+  <a href="../18_toy_js_interpreter/tutorial.html"><span class="dir">← Previous</span>Module 18: A Toy JS Interpreter</a>
+  <a class="next" href="../20_invalidation_pipeline/tutorial.html"><span class="dir">Next →</span>Module 20: Invalidation &amp; Re-render Pipeline</a>
+</div>
+
+</body>
+</html>
