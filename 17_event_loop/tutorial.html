@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Module 17 — The Event Loop | Build a Browser From Scratch</title>
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body style="--accent:#c084fc; --accent-soft:rgba(192,132,252,0.12);">
+
+<div class="course-header">
+  <span class="module-badge">MODULE 17</span>
+  <span class="track-tag">Track 2 · The Browser Application (first module)</span>
+  <h1>The Event <span class="accent">Loop</span></h1>
+  <p class="subtitle">A browser is single-threaded on purpose. This module is the entire mechanism that makes that safe instead of limiting.</p>
+</div>
+
+<span class="decisions-badge">📄 Companion doc: <a href="DECISIONS.md">DECISIONS.md</a> · Source: <a href="event_loop.py">event_loop.py</a></span>
+
+<h2 data-num="00">Prerequisites</h2>
+<div class="prereq-links">
+  <a class="prereq-tag" href="../prereqs/event_driven_programming.html">Event-Driven Programming</a>
+</div>
+
+<h2 data-num="01">The Big Analogy</h2>
+<div class="callout callout-analogy">
+<div class="callout-label">🍽️ The Restaurant, continued</div>
+<p>The head waiter (introduced in Module 0) handles exactly one request
+at a time, fully, before looking at the next one — even if three more
+requests arrive while they're mid-task. A request that arrives while the
+waiter is already helping someone doesn't interrupt them; it joins the
+back of a mental list and waits its turn. This isn't the waiter being
+slow — it's the ONLY way to guarantee that if the waiter is halfway
+through updating table 5's order, nobody else ever sees that order in a
+half-updated state.</p>
+</div>
+
+<h2 data-num="02">What Happens, Step by Step</h2>
+<ol class="step-list">
+<li>Something happens — a click, a script finishing, a timer firing — and gets <code>post()</code>-ed onto the queue. Nothing runs yet; it just waits its turn.</li>
+<li>The loop checks: is the queue non-empty? If so, pop the FRONT item.</li>
+<li>Run that task — a plain, synchronous function call. The loop does nothing else until this call returns.</li>
+<li>If that task posts new work (e.g. a click handler that starts a fetch, which will post another task when it resolves), the new work goes to the BACK of the queue — never cutting ahead of anything already waiting.</li>
+<li>Repeat, forever (or, in this module's own test harness only, until a safety cap is hit — see section 05).</li>
+</ol>
+
+<h2 data-num="03">A Map of One Loop Iteration</h2>
+<div class="diagram-box">
+<div class="kv-diagram">
+  queue (front -> back):  [A, B, C]
+
+  iteration:
+    pop "A"  ->  queue is now [B, C]
+    run A() to completion  -- nothing else happens while this runs
+      (if A calls post("D", ...) mid-run, queue becomes [B, C, D])
+    loop checks queue again
+
+  iteration:
+    pop "B"  ->  queue is now [C, D]
+    run B() to completion
+    ...
+
+  RESULT: run order is always A, B, C, D — new work never jumps the line
+</div>
+<p class="diagram-caption">the loop only ever has ONE question to answer: is the queue empty yet?</p>
+</div>
+
+<h2 data-num="04">The Code, Explained</h2>
+
+<p>The entire loop, guarantees and all, is five lines:</p>
+<div class="filename">event_loop.py</div>
+<pre><code class="language-python">while self.queue and iterations < max_iterations:
+    label, task, args = self.queue.popleft()
+    self.run_log.append(label)
+    task(*args)              # <- runs to completion before the loop continues
+    iterations += 1</code></pre>
+<p>Nothing about this LOOKS special — that's the point. The guarantee
+this module proves doesn't come from clever synchronization code; it
+comes from the ABSENCE of anything that could interrupt
+<code>task(*args)</code> once it starts. No threads, no async
+scheduling, no signal handlers — just an ordinary function call that the
+loop waits on before moving forward.</p>
+
+<h2 data-num="05">Limits / What You Cannot Do Yet</h2>
+<div class="compare-grid">
+  <div class="compare-col cant">
+    <h4>Can't do yet</h4>
+    <ul>
+      <li>Real timers (<code>setTimeout</code>) — this module only proves FIFO ordering, not delayed scheduling</li>
+      <li>Anything to actually PUT in the queue that does something useful — no JS engine exists yet</li>
+      <li>Protection from a runaway task — a real event loop has no `max_iterations` safety net; this module's does, but only for its own automated test</li>
+    </ul>
+  </div>
+  <div class="compare-col can">
+    <h4>Can do now</h4>
+    <ul>
+      <li>Guarantee strict FIFO task ordering</li>
+      <li>Guarantee a task posted mid-run never jumps the queue</li>
+      <li>Guarantee no task ever observes another task's partially-applied changes</li>
+    </ul>
+  </div>
+</div>
+
+<h2 data-num="06">Run It</h2>
+<pre><code class="language-bash">cd 17_event_loop
+python event_loop.py</code></pre>
+<p>Exact output from a real run, unedited:</p>
+<pre><code>CASE 1 — strict FIFO order
+run order: ['A', 'B', 'C']
+ran in exactly the order posted: True
+
+CASE 2 — a task posted mid-handler goes to the BACK, not the front
+run order: ['A', 'B', 'C', 'D']
+D (posted mid-run by B) ran AFTER C, not right after B: True
+
+CASE 3 — a task always runs to completion before the next one sees its effects
+shared_state after mutate: [1, 2, 3]
+what 'observe' actually saw: [1, 2, 3]
+observe saw the FULLY completed mutation, never a partial one: True
+
+CASE 4 — a 'render' task between two DOM-mutating tasks only ever
+sees fully-settled state, never mid-mutation (foreshadows Module 20)
+render snapshots, in order: ['A', 'B']
+each render saw a clean, settled value — never a mix of A and B: True</code></pre>
+
+<div class="callout callout-trouble">
+<div class="callout-label">⚠ Getting a blank or broken result?</div>
+<ul>
+<li><strong>Case 2 shows D running right after B, not after C:</strong> check `post()` always appends — an implementation that inserted at some other position (or ran newly-posted tasks immediately) would break this exact guarantee.</li>
+<li><strong>Loop never terminates in your own experiments:</strong> that's expected if a task keeps reposting itself — this module's `max_iterations` guard exists exactly to keep this specific demo bounded; remove it and a genuinely infinite handler would hang forever, matching real behavior.</li>
+</ul>
+</div>
+
+<h2 data-num="07">Brain Exercise</h2>
+<div class="callout callout-brain">
+<div class="callout-label">🧠 Think before you reveal</div>
+<p><strong>Case 4 posts tasks in the order: set-a, render-1, set-b,
+render-2. If a browser instead ran set-a and set-b BACK TO BACK before
+either render ran — same total work, different order — what would the
+`render_snapshots` list look like, and would that still be "correct"
+behavior for an event loop?</strong></p>
+<details>
+<summary>Reveal the answer</summary>
+<p>If both `set-a` and `set-b` ran before any render, `dom["text"]` would
+be `"B"` by the time EITHER render task got to look at it — so
+`render_snapshots` would come out as `['B', 'B']`, not `['A', 'B']`. And
+yes, that would still be entirely correct event-loop behavior — the loop
+only guarantees the ORDER TASKS WERE POSTED IN is the order they run in;
+it makes no promise about which specific tasks a caller chooses to post,
+or in what sequence. This module's Case 4 result (`['A', 'B']`) is a
+direct consequence of the SPECIFIC order the demo code posted tasks in,
+not a property of the event loop enforcing some "give every render a
+turn" fairness rule — the loop has no concept of fairness at all, only
+strict FIFO.</p>
+</details>
+</div>
+
+<h2 data-num="08">There Are No Dumb Questions</h2>
+
+<div class="qa-item">
+<div class="qa-q">Is this really how a real browser's event loop works, or a big simplification?</div>
+<div class="qa-a">The core mechanism — a queue, popped one at a time, each task run to completion — is genuinely how it works. Real browsers add real complexity on top: separate "macrotask" and "microtask" queues with different draining rules, rendering opportunities interleaved at specific points, and timers that need real wall-clock scheduling. This module's `EventLoop` is the honest foundation those additions sit on top of, not a fake stand-in for it.</div>
+</div>
+
+<div class="qa-item">
+<div class="qa-q">Why does this module matter for a "browser" course — isn't this just generic concurrency plumbing?</div>
+<div class="qa-a">Because it's the specific mechanism that makes Modules 19 and 20 safe. Once script can mutate the DOM (Module 19), something has to guarantee the render pipeline (Modules 10-16, already built) never gets asked to lay out or paint a tree that's halfway through being changed. That guarantee isn't layout code's job — it's THIS module's job, proven here before either of those modules exists.</div>
+</div>
+
+<div class="qa-item">
+<div class="qa-q">What actually happens if a task raises an exception?</div>
+<div class="qa-a">In this module's current code, an unhandled exception inside `task(*args)` would propagate up and crash `run_until_empty()` entirely, stopping the whole loop — every remaining queued task, including unrelated ones, would never run. Real browsers handle this differently (an error in one event handler is caught and reported without killing the entire page), which this module doesn't implement — a real, honest gap worth knowing before relying on this code for anything beyond its own demonstrations.</div>
+</div>
+
+<h2 data-num="09">What's Next</h2>
+<p>The queue works, but nothing interesting is going into it yet — every
+task in this module's demo was a small Python function written by hand.
+Module 18 builds the first thing that will actually generate real tasks
+for this loop: a working interpreter for a real subset of JavaScript.</p>
+
+<div class="module-nav">
+  <a href="../16_compositing/tutorial.html"><span class="dir">← Previous</span>Module 16: Compositing &amp; Layers</a>
+  <a class="next" href="../18_toy_js_interpreter/tutorial.html"><span class="dir">Next →</span>Module 18: A Toy JS Interpreter</a>
+</div>
+
+</body>
+</html>
