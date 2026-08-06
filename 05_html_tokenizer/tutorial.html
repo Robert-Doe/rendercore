@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Module 5 — HTML Tokenizer | Build a Browser From Scratch</title>
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body style="--accent:#34d399; --accent-soft:rgba(52,211,153,0.12);">
+
+<div class="course-header">
+  <span class="module-badge">MODULE 5</span>
+  <span class="track-tag">Track 1 · Phase 2: From Bytes to a Document Tree</span>
+  <h1>HTML <span class="accent">Tokenizer</span></h1>
+  <p class="subtitle">The first thing a browser does with your HTML is refuse to think of it as one long string ever again.</p>
+</div>
+
+<span class="decisions-badge">📄 Companion doc: <a href="DECISIONS.md">DECISIONS.md</a> · Source: <a href="html_tokenizer.py">html_tokenizer.py</a></span>
+
+<h2 data-num="00">Prerequisites</h2>
+<div class="prereq-links">
+  <a class="prereq-tag" href="../prereqs/state_machines.html">State Machines</a>
+</div>
+
+<h2 data-num="01">The Big Analogy</h2>
+<div class="callout callout-analogy">
+<div class="callout-label">🍽️ The Restaurant, continued</div>
+<p>The prep cook opening the crate doesn't read the packing slip as one
+giant sentence. They read it item by item, and — critically — their
+current <em>mode</em> changes what a symbol means. A quotation mark seen
+while reading "ingredient name" mode means something different than one
+seen while already inside a quoted note. And if the slip includes a
+photocopied recipe card taped inside it (a `&lt;script&gt;` block), the
+prep cook doesn't try to treat the recipe's own punctuation as more
+packing-slip instructions — they read the whole recipe as one attached
+note and move on once they find its edge.</p>
+</div>
+
+<h2 data-num="02">What Happens, Step by Step</h2>
+<ol class="step-list">
+<li>Start in the <code>DATA</code> state, accumulating plain characters into a text buffer.</li>
+<li>See a <code>&lt;</code>: flush any buffered text as a <code>Text</code> token, then look at what follows to decide what kind of markup this is.</li>
+<li><code>&lt;!--</code> → scan for the matching <code>--&gt;</code> and emit one <code>Comment</code> token, whatever's inside it (even fake-looking tags).</li>
+<li><code>&lt;/</code> → read a tag name and emit an <code>EndTag</code> token.</li>
+<li>A letter → read a tag name, then loop reading attribute name/value pairs (handling double-quoted, single-quoted, and unquoted values differently) until <code>&gt;</code> or <code>/&gt;</code>, and emit a <code>StartTag</code> token.</li>
+<li>If that start tag was <code>&lt;script&gt;</code> or <code>&lt;style&gt;</code>, switch to <code>RAWTEXT</code> state: everything until the matching end tag is one literal <code>Text</code> token, <code>&lt;</code> and <code>&gt;</code> included, no exceptions.</li>
+</ol>
+
+<h2 data-num="03">A Map of the States</h2>
+<div class="diagram-box">
+<div class="kv-diagram">
+              see '<'                see letter
+   DATA ───────────────► (peek) ───────────────► consume start tag ──► emit StartTag
+    ▲                       │                              │
+    │ text char             │ see '/'                      │ name in {script, style}?
+    │ (buffer it)           ▼                               ▼
+    │                  consume end tag              RAWTEXT (scan for </name)
+    │                  emit EndTag                          │
+    │                       │                                │ found it
+    └───────────────────────┴────────────────────────────────┘
+                    (back to DATA, re-process the '<' normally)
+
+   see '<!--'  ─► scan to '-->' ─► emit Comment  ─► back to DATA
+</div>
+<p class="diagram-caption">DATA and RAWTEXT are the only two states that change what counts as markup at all</p>
+</div>
+
+<h2 data-num="04">The Code, Explained</h2>
+
+<p>The RAWTEXT scan is the module's single most important trick, because
+it's the difference between a tokenizer that survives real web pages and
+one that doesn't:</p>
+<div class="filename">html_tokenizer.py</div>
+<pre><code class="language-python">def _step_rawtext(self):
+    end_marker = f"</{self.rawtext_tag_name}"
+    idx = self.html.lower().find(end_marker, self.pos)
+    ...
+    if data:
+        self.tokens.append(Text(data))
+    self.state = "DATA"</code></pre>
+<p>While in this state, a <code>&lt;</code> inside <code>if (x &lt; 10)</code>
+is never even inspected as a possible tag start — the whole block between
+<code>&lt;script&gt;</code> and <code>&lt;/script&gt;</code> is captured
+as one literal string in a single step.</p>
+
+<h2 data-num="05">Limits / What You Cannot Do Yet</h2>
+<div class="compare-grid">
+  <div class="compare-col cant">
+    <h4>Can't do yet</h4>
+    <ul>
+      <li>Decode entities — <code>&amp;amp;</code> stays as four literal characters, not <code>&amp;</code></li>
+      <li>Build any tree structure — tokens are still a flat list</li>
+      <li>Recover from deeply malformed HTML the way real browsers famously do (Module 6)</li>
+    </ul>
+  </div>
+  <div class="compare-col can">
+    <h4>Can do now</h4>
+    <ul>
+      <li>Correctly tokenize tags, attributes (all three quoting styles), comments, and self-closing tags</li>
+      <li>Correctly protect script/style content from being misread as markup</li>
+      <li>Correctly order text relative to the tags around it</li>
+    </ul>
+  </div>
+</div>
+
+<h2 data-num="06">Run It</h2>
+<pre><code class="language-bash">cd 05_html_tokenizer
+python html_tokenizer.py</code></pre>
+<p>Exact output from a real run, unedited (30 tokens — abbreviated here, full list in the source's own printout):</p>
+<pre><code>  [ 4] StartTag(name='title', attrs={}, self_closing=False)
+  [ 5] Text(data='Test Page')
+  [ 6] EndTag(name='title')
+  ...
+  [19] StartTag(name='img', attrs={'src': 'a.png'}, self_closing=True)
+  [20] Text(data='\n  ')
+  [21] Comment(data=' a comment with &lt;fake&gt; tags inside, ignored ')
+  ...
+  [23] StartTag(name='script', attrs={}, self_closing=False)
+  [24] Text(data='\n    if (x &lt; 10) { console.log("a &lt; b"); }\n  ')
+  [25] EndTag(name='script')
+
+======================================================================
+Checks
+======================================================================
+script content captured as one Text token containing 'x < 10': True
+comment's embedded '<fake>' captured as Comment text, not a tag: True
+self-closing <img> parsed with self_closing=True and src attr: True
+text before </title> ordered BEFORE the end tag, not after: True</code></pre>
+
+<div class="callout callout-trouble">
+<div class="callout-label">⚠ Getting a blank or broken result?</div>
+<ul>
+<li><strong>Text appears in the wrong order relative to tags:</strong> this exact bug happened during this module's own development — see the Q&amp;A below and DECISIONS.md for the real fix.</li>
+<li><strong>Script content gets split into multiple tokens or truncated:</strong> check that the tag name comparison in <code>_step_rawtext</code> is case-insensitive (<code>.lower()</code>) — <code>&lt;SCRIPT&gt;</code> and <code>&lt;/script&gt;</code> must still match.</li>
+</ul>
+</div>
+
+<h2 data-num="07">Brain Exercise</h2>
+<div class="callout callout-brain">
+<div class="callout-label">🧠 Think before you reveal</div>
+<p><strong>The very first version of this tokenizer flushed buffered text
+before emitting a <code>StartTag</code> token, but NOT before an
+<code>EndTag</code> or <code>Comment</code> token. Before reading
+DECISIONS.md's account of it: what observable, wrong output would that
+produce for <code>&lt;title&gt;Test Page&lt;/title&gt;</code>, and why does
+the bug only show up on END tags, not start tags?</strong></p>
+<details>
+<summary>Reveal the answer</summary>
+<p>The text "Test Page" would end up appearing <em>after</em>
+<code>EndTag("title")</code> in the token list instead of between the
+start and end tags — and it would keep drifting further out of place,
+attaching itself to whatever the <em>next</em> flush happened to be (in
+the real run, it surfaced after <code>EndTag("head")</code> too, right
+before the next start tag). It only shows up on end tags because the
+original code's `_consume_markup` had an explicit `self._emit_text_if_any()`
+call in the start-tag branch, but the end-tag and comment branches jumped
+straight to consuming the tag/comment without that call — an easy
+one-line omission to make once, and easy to miss by reading the code,
+because the start-tag path (the one everybody tests first, since most
+HTML opens far more tags than it comments) looked completely correct.
+Running it against real markup with all three token types was what
+actually surfaced it.</p>
+</details>
+</div>
+
+<h2 data-num="08">There Are No Dumb Questions</h2>
+
+<div class="qa-item">
+<div class="qa-q">Did the text-ordering bug in DECISIONS.md actually happen, or is it a made-up teaching example?</div>
+<div class="qa-a">It actually happened, in this exact file, during this exact module's development — the first real run's output showed <code>Text("Test Page")</code> appearing after <code>EndTag("head")</code> instead of between <code>&lt;title&gt;</code> and <code>&lt;/title&gt;</code>. That's precisely why this course's process insists on running every module and checking real output before writing documentation about it — the bug was invisible from reading the code alone.</div>
+</div>
+
+<div class="qa-item">
+<div class="qa-q">Why does a comment's content just get grabbed with `str.find`, when tags get a whole careful state machine?</div>
+<div class="qa-a">Because nothing inside a comment is ever re-interpreted as markup, no matter what it looks like — <code>&lt;!-- a comment with &lt;fake&gt; tags inside --&gt;</code> proves this: the fake tag never becomes a real `StartTag` token. Once you know "everything up to the next `-->`  is opaque data," a direct search is both correct and simpler than modeling states for content that's never actually parsed further.</div>
+</div>
+
+<div class="qa-item">
+<div class="qa-q">What happens to `&amp;` in this tokenizer — does it become `&`?</div>
+<div class="qa-a">No — it stays as the four literal characters `&amp;`. Entity decoding is a real, separate piece of the HTML spec this module deliberately doesn't implement (DECISIONS.md). Every sample HTML this course uses from here forward is written to not depend on it.</div>
+</div>
+
+<h2 data-num="09">What's Next</h2>
+<p>This module's output is still a flat list — 30 tokens with no idea
+that the `<title>` StartTag and EndTag are a matched pair, or that `<p>`
+is nested inside `<body>`. Module 6 takes exactly this token stream and
+builds the actual tree.</p>
+
+<div class="module-nav">
+  <a href="../04_https_tls/tutorial.html"><span class="dir">← Previous</span>Module 4: TLS via Socket Wrapping</a>
+  <a class="next" href="../06_dom_tree_builder/tutorial.html"><span class="dir">Next →</span>Module 6: HTML Tree Builder</a>
+</div>
+
+</body>
+</html>
