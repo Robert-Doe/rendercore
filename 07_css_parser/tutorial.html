@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Module 7 — CSS Tokenizer &amp; Parser | Build a Browser From Scratch</title>
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body style="--accent:#a3e635; --accent-soft:rgba(163,230,53,0.14);">
+
+<div class="course-header">
+  <span class="module-badge">MODULE 7</span>
+  <span class="track-tag">Track 1 · Phase 2: From Bytes to a Document Tree</span>
+  <h1>CSS Tokenizer <span class="accent">&amp; Parser</span></h1>
+  <p class="subtitle">CSS gets its own tokenizer and parser, completely independent of HTML's — because it's a completely independent grammar.</p>
+</div>
+
+<span class="decisions-badge">📄 Companion doc: <a href="DECISIONS.md">DECISIONS.md</a> · Source: <a href="css_parser.py">css_parser.py</a></span>
+
+<h2 data-num="00">Prerequisites</h2>
+<div class="prereq-links">
+  <a class="prereq-tag" href="../prereqs/trees_and_recursion.html">Trees &amp; Recursive Traversal</a>
+</div>
+
+<h2 data-num="01">The Big Analogy</h2>
+<div class="callout callout-analogy">
+<div class="callout-label">🍽️ The Restaurant, continued</div>
+<p>This is the pastry chef reading the house style guide — a completely
+separate document from the order slip, written in its own format. Its
+entries look like <em>"for any dish tagged 'soup', use the blue bowl"</em>
+— a description of <strong>which dishes it applies to</strong> (the
+selector) and <strong>what to do for them</strong> (the declarations).
+The style guide doesn't know or care what order the actual dishes will
+come out in — it's read once into a reference list, consulted per-dish
+later. That "consulted later" step is Module 8; this module only builds
+the reference list.</p>
+</div>
+
+<h2 data-num="02">What Happens, Step by Step</h2>
+<ol class="step-list">
+<li>Strip <code>/* comments */</code> — they carry no meaning past this point.</li>
+<li>Repeatedly find the next <code>{</code>: everything before it (up to the last rule's <code>}</code>) is selector text.</li>
+<li>If that selector text starts with <code>@</code> (an at-rule like <code>@media</code>), skip the entire block — including any braces nested inside it — unparsed.</li>
+<li>Otherwise, find the matching <code>}</code>, split the selector text on commas into one or more individual selectors, and parse the block between the braces as declarations.</li>
+<li>Each selector splits on whitespace into compound selectors (descendant combinators), and each compound splits into an optional type name plus any <code>.class</code> and <code>#id</code> pieces.</li>
+<li>Each declaration splits on <code>:</code> into property/value, with a trailing <code>!important</code> detected and stripped into its own flag.</li>
+</ol>
+
+<h2 data-num="03">A Map of a Parsed Rule</h2>
+<div class="diagram-box">
+<div class="kv-diagram">
+  nav a.active { color: red; }
+  \_____________/ \____________/
+     selector          declarations
+
+  "nav a.active"  -->  Selector([
+                          SimpleSelector(type='nav'),
+                          SimpleSelector(type='a', classes=['active']),
+                        ])
+                        \_____________/  \_______________________/
+                          ancestor              the element itself
+                        (descendant combinator = whitespace between them)
+
+  "color: red;"   -->  [ Declaration(property='color', value='red', important=False) ]
+</div>
+<p class="diagram-caption">a Selector is a left-to-right ancestor chain; a Rule pairs a list of these with a list of declarations</p>
+</div>
+
+<h2 data-num="04">The Code, Explained</h2>
+
+<p>The at-rule skip is one `if`, but it's the difference between handling
+a real stylesheet and crashing on the first `@media` block:</p>
+<div class="filename">css_parser.py</div>
+<pre><code class="language-python">if header.startswith("@"):
+    i = _skip_block(css, brace_idx)   # depth-aware: handles nested { }
+    continue</code></pre>
+<p><code>_skip_block</code> counts brace depth rather than just finding
+the next <code>}</code>, because an <code>@media</code> block's closing
+brace isn't the first one encountered — there's a whole nested rule
+(<code>body { font-size: 14px; }</code>) inside it first.</p>
+
+<p>The compound-selector parser is a small loop that never needs to know
+in advance how many classes a selector has:</p>
+<div class="filename">css_parser.py</div>
+<pre><code class="language-python">while i < n:
+    marker = token[i]      # '.' or '#'
+    i += 1
+    start = i
+    while i < n and token[i] not in ".#":
+        i += 1
+    piece = token[start:i]
+    if marker == ".":
+        classes.append(piece)
+    elif marker == "#":
+        id_ = piece</code></pre>
+<p>This is what lets <code>div.card.featured#hero</code> — three
+qualifiers on one element — parse correctly without any special-casing
+for "how many classes."</p>
+
+<h2 data-num="05">Limits / What You Cannot Do Yet</h2>
+<div class="compare-grid">
+  <div class="compare-col cant">
+    <h4>Can't do yet</h4>
+    <ul>
+      <li>Parse child (<code>&gt;</code>), sibling (<code>+</code>, <code>~</code>) combinators — descendant only</li>
+      <li>Evaluate <code>@media</code> conditions — they're skipped, not applied</li>
+      <li>Decide which rule wins a conflict (that's specificity — Module 9)</li>
+      <li>Handle attribute selectors (<code>[type="text"]</code>) or pseudo-classes (<code>:hover</code>)</li>
+    </ul>
+  </div>
+  <div class="compare-col can">
+    <h4>Can do now</h4>
+    <ul>
+      <li>Parse type, class, id, universal, and compound selectors</li>
+      <li>Parse comma-separated selector groups sharing one declaration block</li>
+      <li>Parse descendant-combinator selectors like <code>nav a.active</code></li>
+      <li>Correctly detect <code>!important</code> and skip unsupported at-rule blocks without crashing</li>
+    </ul>
+  </div>
+</div>
+
+<h2 data-num="06">Run It</h2>
+<pre><code class="language-bash">cd 07_css_parser
+python css_parser.py</code></pre>
+<p>Exact output from a real run, unedited:</p>
+<pre><code>Parsed 6 rules (the @media block should be SKIPPED, not counted):
+
+  Rule(* { 2 declarations })
+      selector parts: [*]
+      margin: 0
+      padding: 0
+  Rule(body { 2 declarations })
+      selector parts: [body]
+      font-family: sans-serif
+      color: #333
+  Rule(*.card, *.panel { 2 declarations })
+      selector parts: [*.card]
+      selector parts: [*.panel]
+      border: 1px solid #ccc
+      padding: 10px !important
+  Rule(nav a.active { 1 declarations })
+      selector parts: [nav, a.active]
+      color: red
+  Rule(*#main-header { 1 declarations })
+      selector parts: [*#main-header]
+      font-size: 24px
+  Rule(h1, h2 { 1 declarations })
+      selector parts: [h1]
+      selector parts: [h2]
+      font-weight: bold
+
+======================================================================
+Checks
+======================================================================
+6 real rules parsed, @media skipped entirely: True
+'.card, .panel' has 2 comma-separated selectors: True
+padding declaration correctly marked !important, value cleaned to '10px': True
+'nav a.active' parsed as 2-part descendant selector (nav, then a.active): True
+'#main-header' parsed with id constraint, no type constraint: True
+'*' (universal) parsed with type_name=None (no constraint): True</code></pre>
+<p>Note the printed form <code>*.card</code> for what was written as
+<code>.card</code> — that's <code>SimpleSelector.__repr__</code> making
+the implicit universal type visible, not a parsing error; see section 08.</p>
+
+<div class="callout callout-trouble">
+<div class="callout-label">⚠ Getting a blank or broken result?</div>
+<ul>
+<li><strong>Rule count includes the @media block's inner rule:</strong> check <code>_skip_block</code> is tracking brace depth, not just finding the first <code>}</code> after the at-rule starts.</li>
+<li><strong><code>!important</code> not detected:</strong> confirm there's no space between the value and <code>!important</code> in your test input — this module's detection is deliberately narrow (DECISIONS.md).</li>
+</ul>
+</div>
+
+<h2 data-num="07">Brain Exercise</h2>
+<div class="callout callout-brain">
+<div class="callout-label">🧠 Think before you reveal</div>
+<p><strong>Given that this parser only understands the descendant
+combinator, what would <code>_parse_compound()</code> actually produce
+for the token <code>&gt;</code> if someone wrote <code>nav &gt; a.active</code>
+as a selector — and would it fail loudly or silently?</strong></p>
+<details>
+<summary>Reveal the answer</summary>
+<p>Silently — no exception. <code>text.split()</code> on
+<code>"nav &gt; a.active"</code> produces three tokens:
+<code>"nav"</code>, <code>"&gt;"</code>, and <code>"a.active"</code>. The
+middle token <code>"&gt;"</code> gets fed into <code>_parse_compound()</code>,
+whose first character isn't <code>.</code> or <code>#</code>, so the
+whole string <code>"&gt;"</code> is read as a <em>type name</em> — producing
+a nonsensical <code>SimpleSelector(type_name='&gt;')</code> that will never
+match any real element, silently making the whole selector match nothing.
+This is exactly the kind of gap DECISIONS.md names explicitly rather than
+letting a learner discover it by surprise: unsupported syntax here doesn't
+crash, it just quietly fails to match anything, which is arguably worse to
+debug than a loud error.</p>
+</details>
+</div>
+
+<h2 data-num="08">There Are No Dumb Questions</h2>
+
+<div class="qa-item">
+<div class="qa-q">Why does the demo output print <code>.card</code> back as <code>*.card</code>?</div>
+<div class="qa-a"><code>SimpleSelector.__repr__</code> always shows a type position, defaulting to <code>*</code> when `type_name` is `None` — purely a printing choice to make "no type constraint" visible, not a sign the parser rewrote your selector. Internally, `.card` and `*.card` are stored identically, because they mean the same thing.</div>
+</div>
+
+<div class="qa-item">
+<div class="qa-q">Why does this module bother skipping `@media` blocks instead of just refusing to handle them (crashing loudly)?</div>
+<div class="qa-a">Because real, ordinary stylesheets contain `@media` blocks constantly (responsive design depends on them), and a browser that crashed on the first one would be unable to render a huge fraction of real pages — the same reasoning Module 6 used for silently ignoring stray end tags. "Unsupported" and "fatal" are different categories; skip-and-continue keeps everything else in the stylesheet usable.</div>
+</div>
+
+<div class="qa-item">
+<div class="qa-q">Couldn't the declaration parser get confused by a value that itself contains a colon, like a URL?</div>
+<div class="qa-a">Potentially, yes — `partition(":")` splits on the FIRST colon only, so `background: url(http://example.com/a.png)` would correctly keep `url(http://example.com/a.png)` as one value (since only the first colon after "background" is used as the split point). But a value containing a semicolon inside quotes would break the declaration-splitting logic, since `text.split(";")` has no awareness of string quoting. This module doesn't defend against that — a real limitation worth knowing, not silently glossed over.</div>
+</div>
+
+<h2 data-num="09">What's Next</h2>
+<p>Two structures now exist independently: Module 6's DOM tree, and this
+module's list of parsed rules. Neither knows anything about the other
+yet. Module 8 is the bridge — for a given DOM node, which of these
+parsed selectors actually match it.</p>
+
+<div class="module-nav">
+  <a href="../06_dom_tree_builder/tutorial.html"><span class="dir">← Previous</span>Module 6: HTML Tree Builder</a>
+  <a class="next" href="../08_selector_matching/tutorial.html"><span class="dir">Next →</span>Module 8: Selector Matching Engine</a>
+</div>
+
+</body>
+</html>
