@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Module 22 — Cookies &amp; Storage | Build a Browser From Scratch</title>
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body style="--accent:#c026d3; --accent-soft:rgba(192,38,211,0.12);">
+
+<div class="course-header">
+  <span class="module-badge">MODULE 22</span>
+  <span class="track-tag">Track 2 · The Browser Application</span>
+  <h1>Cookies <span class="accent">&amp; Storage</span></h1>
+  <p class="subtitle">The web is stateless by design (Module 3). Cookies are the specific, bounded exception a server can ask the client to remember for it.</p>
+</div>
+
+<span class="decisions-badge">📄 Companion doc: <a href="DECISIONS.md">DECISIONS.md</a> · Source: <a href="cookies.py">cookies.py</a></span>
+
+<h2 data-num="00">Prerequisites</h2>
+<div class="prereq-links">
+  <a class="prereq-tag" href="../03_http_from_scratch/tutorial.html">Module 3: HTTP/1.1 From Scratch</a>
+  <a class="prereq-tag" href="../prereqs/origins_and_security_boundary.html">Origins &amp; the Security Boundary</a>
+</div>
+
+<h2 data-num="01">The Big Analogy</h2>
+<div class="callout callout-analogy">
+<div class="callout-label">🍽️ The Restaurant, continued</div>
+<p>The restaurant hands returning guests a small numbered claim ticket:
+"next time you visit, show us this and we'll remember your usual table."
+The ticket has fine print: which SECTION of the restaurant it's valid
+for ("front dining room only," or "anywhere") and whether it's honored
+at all if you show up through the back service entrance instead of the
+front door (a plain, unencrypted connection vs. a secure one). The
+restaurant never has to remember you between visits on its own — the
+GUEST carries the ticket back, every time, and the restaurant just
+honors whatever it's shown.</p>
+</div>
+
+<h2 data-num="02">What Happens, Step by Step</h2>
+<ol class="step-list">
+<li>A response includes one or more <code>Set-Cookie</code> headers. Each is parsed into a name, value, path scope, and whether it requires a secure connection.</li>
+<li>The cookie is stored, keyed by which host set it and what path it's scoped to.</li>
+<li>On every LATER request to that same host, the jar is asked: which stored cookies apply to THIS specific request path (and connection security)?</li>
+<li>Only the matching cookies are joined into one <code>Cookie:</code> header and sent — a cookie scoped to <code>/account</code> is never sent for a request to <code>/</code>.</li>
+<li>The jar can be saved to disk and reloaded later, in a completely different object/process, and produce identical results — proving the state genuinely persisted, not just stayed alive in memory.</li>
+</ol>
+
+<h2 data-num="03">A Map of Path Scoping</h2>
+<div class="diagram-box">
+<div class="kv-diagram">
+  Set-Cookie: session=abc123; Path=/            <- matches EVERYTHING
+  Set-Cookie: pref=dark;      Path=/account      <- matches /account and deeper only
+
+  request to  "/"          -> Cookie: session=abc123
+  request to  "/account"   -> Cookie: session=abc123; pref=dark
+  request to  "/accounting" -> Cookie: session=abc123               (NOT pref — see section 07)
+
+  path match rule:  request_path == cookie_path
+                     OR request_path.startswith(cookie_path + "/")
+</div>
+<p class="diagram-caption">the trailing "/" in the startswith check is small and load-bearing — see the brain exercise</p>
+</div>
+
+<h2 data-num="04">The Code, Explained</h2>
+
+<p>The path-matching guard against a subtle false-positive:</p>
+<div class="filename">cookies.py</div>
+<pre><code class="language-python">def _path_matches(cookie_path, request_path):
+    if request_path == cookie_path:
+        return True
+    prefix = cookie_path if cookie_path.endswith("/") else cookie_path + "/"
+    return request_path.startswith(prefix)</code></pre>
+<p>Without the trailing-slash normalization, <code>"/accounting".startswith("/account")</code>
+is <code>True</code> in plain Python string comparison — which would
+incorrectly leak an <code>/account</code>-scoped cookie to an entirely
+different, unrelated path that just happens to share a text prefix.</p>
+
+<p>Verification doesn't trust the client's own claim — it inspects what
+actually arrived at the server:</p>
+<div class="filename">cookies.py</div>
+<pre><code class="language-python">server_saw = holder["requests"][1].decode("ascii", errors="replace")
+print(f"'session=abc123' in server_saw and 'pref=dark' not in server_saw")</code></pre>
+
+<h2 data-num="05">Limits / What You Cannot Do Yet</h2>
+<div class="compare-grid">
+  <div class="compare-col cant">
+    <h4>Can't do yet</h4>
+    <ul>
+      <li><code>Domain=</code> subdomain-widening — cookies are scoped to the exact host that set them</li>
+      <li><code>Expires</code>/<code>Max-Age</code> — no cookie ever expires in this module</li>
+      <li>localStorage/sessionStorage — this module covers cookies only</li>
+    </ul>
+  </div>
+  <div class="compare-col can">
+    <h4>Can do now</h4>
+    <ul>
+      <li>Correctly parse and scope real <code>Set-Cookie</code> headers by path</li>
+      <li>Correctly withhold path-mismatched and (if applicable) insecure-connection cookies</li>
+      <li>Prove persistence across a genuine object/process boundary, not just within one run</li>
+    </ul>
+  </div>
+</div>
+
+<h2 data-num="06">Run It</h2>
+<pre><code class="language-bash">cd 22_cookies_storage
+python cookies.py</code></pre>
+<p>Exact output from a real run, unedited:</p>
+<pre><code>REQUEST 2 — GET / — should send ONLY 'session' (Path=/ covers it)
+  Cookie header this client WOULD send: 'session=abc123'
+  server actually RECEIVED (raw request):
+    GET / HTTP/1.1
+    Host: 127.0.0.1
+    Connection: close
+    Cookie: session=abc123
+
+REQUEST 3 — GET /account — should send BOTH cookies (Path=/account matches too)
+  Cookie header this client WOULD send: 'session=abc123; pref=dark'
+  server actually RECEIVED (raw request):
+    GET /account HTTP/1.1
+    Host: 127.0.0.1
+    Connection: close
+    Cookie: session=abc123; pref=dark
+
+======================================================================
+Checks
+======================================================================
+request to / sent ONLY session (not pref, wrong path scope): True
+request to /account sent BOTH cookies: True
+reloaded jar (a DIFFERENT object, loaded from disk) produces the IDENTICAL Cookie header for /account as the original jar: True
+reloaded jar is provably a separate object, not the same instance: True</code></pre>
+
+<div class="callout callout-trouble">
+<div class="callout-label">⚠ Getting a blank or broken result?</div>
+<ul>
+<li><strong>Cookies leak to the wrong path:</strong> check `_path_matches` includes the trailing-slash guard — without it, path prefixes can false-match.</li>
+<li><strong>Reloaded jar produces different output than the original:</strong> check `save()`/`load()` round-trip every field on `Cookie` (name, value, domain, path, secure) — dropping one silently changes matching behavior after reload.</li>
+</ul>
+</div>
+
+<h2 data-num="07">Brain Exercise</h2>
+<div class="callout callout-brain">
+<div class="callout-label">🧠 Think before you reveal</div>
+<p><strong>If `_path_matches` used `request_path.startswith(cookie_path)`
+directly — no trailing-slash normalization — would a cookie scoped to
+`Path=/account` be sent on a request to `/accounting`? Is that a
+theoretical concern or a realistic one?</strong></p>
+<details>
+<summary>Reveal the answer</summary>
+<p>Yes, it would leak — <code>"/accounting".startswith("/account")</code>
+evaluates to <code>True</code> in Python, since `/accounting` genuinely
+does begin with the six characters `/account`. And it's a realistic
+concern, not a manufactured edge case: real sites commonly have paths
+like <code>/user</code> and <code>/users</code>, or <code>/api</code>
+and <code>/apidocs</code>, where an unguarded prefix check would leak a
+cookie meant for one path scope into requests for a completely different,
+unrelated section of the site. This is exactly the class of bug RFC
+6265's actual path-matching algorithm is written carefully enough to
+avoid, and exactly why `_path_matches` isn't just
+`request_path.startswith(cookie_path)`.</p>
+</details>
+</div>
+
+<h2 data-num="08">There Are No Dumb Questions</h2>
+
+<div class="qa-item">
+<div class="qa-q">Why does this module use a local hand-rolled server instead of a real cookie-setting website?</div>
+<div class="qa-a">Determinism, the same reasoning as Module 3's local chunked-encoding test. A public test endpoint can go down, change its behavior, or rate-limit — and this module's whole point is testing precise path-scoping logic, which needs a server that behaves EXACTLY the same way every single run.</div>
+</div>
+
+<div class="qa-item">
+<div class="qa-q">Is checking `Secure` at request-time instead of storage-time a meaningful difference?</div>
+<div class="qa-a">Yes — it means the exact same stored cookie can correctly be included or excluded depending on how THIS SPECIFIC request is being made, without needing two separate jars or a resync step. It also matches how the real security property actually works: `Secure` isn't about where a cookie lives, it's about what kind of connection it's allowed to travel over.</div>
+</div>
+
+<div class="qa-item">
+<div class="qa-q">Why prove persistence with `is not` (object identity) again, the same technique Module 20 used?</div>
+<div class="qa-a">For the same reason: it's the only way to rule out an accidental false-positive where the "reloaded" jar is secretly still the original object (e.g., a `load()` implementation that forgot to actually create a new instance). Confirming both that the VALUES match and that the OBJECT is different together prove real serialization happened, not that nothing was ever separated in the first place.</div>
+</div>
+
+<h2 data-num="09">What's Next</h2>
+<p>Cookies are scoped by host, but nothing has actually STOPPED one
+origin's script from reading another origin's cookies or DOM yet —
+that enforcement doesn't exist in this course until Module 23, which
+builds and tests the same-origin policy directly.</p>
+
+<div class="module-nav">
+  <a href="../21_chrome_ui/tutorial.html"><span class="dir">← Previous</span>Module 21: Chrome UI</a>
+  <a class="next" href="../23_same_origin_policy/tutorial.html"><span class="dir">Next →</span>Module 23: Same-Origin Policy</a>
+</div>
+
+</body>
+</html>
