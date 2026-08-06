@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Module 3 — HTTP/1.1 From Scratch | Build a Browser From Scratch</title>
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body style="--accent:#818cf8; --accent-soft:rgba(129,140,248,0.12);">
+
+<div class="course-header">
+  <span class="module-badge">MODULE 3</span>
+  <span class="track-tag">Track 1 · Phase 1: Bare Metal Foundation</span>
+  <h1>HTTP/1.1 <span class="accent">From Scratch</span></h1>
+  <p class="subtitle">Module 1 cheated by asking the server to hang up. A real client has to know when a response ends without that crutch.</p>
+</div>
+
+<span class="decisions-badge">📄 Companion doc: <a href="DECISIONS.md">DECISIONS.md</a> · Source: <a href="http_client.py">http_client.py</a></span>
+
+<h2 data-num="00">Prerequisites</h2>
+<div class="prereq-links">
+  <a class="prereq-tag" href="../prereqs/client_server_model.html">The Client–Server Model</a>
+  <a class="prereq-tag" href="../prereqs/bytes_and_encoding.html">Bytes &amp; Text Encoding</a>
+  <a class="prereq-tag" href="../01_raw_socket/tutorial.html">Module 1: Raw TCP Socket</a>
+  <a class="prereq-tag" href="../02_url_parser/tutorial.html">Module 2: URL Parser</a>
+</div>
+
+<h2 data-num="01">The Big Analogy</h2>
+<div class="callout callout-analogy">
+<div class="callout-label">🍽️ The Restaurant, continued</div>
+<p>Module 1's runner got away with something sloppy: they waited at the
+warehouse door until the warehouse worker <em>felt like</em> shutting the
+door, and treated "door shut" as "crate is fully packed." That only
+worked because this particular warehouse happened to shut the door right
+after handing over one crate.</p>
+<p>A professional runner doesn't rely on that. A proper packing slip
+either says <strong>"this crate contains exactly 40 items"</strong>
+(Content-Length — count them as they come out, stop at 40, don't wait for
+anything else) or ships the crate in labeled batches, each batch stamped
+with its own size, ending with a batch stamped <strong>"size zero — that
+was the last one"</strong> (chunked encoding). Either way, the runner
+knows the crate is complete from the paperwork itself, never from the
+warehouse door happening to close.</p>
+</div>
+
+<h2 data-num="02">What Happens, Step by Step</h2>
+<ol class="step-list">
+<li><code>format_request()</code> builds the exact bytes of a request line + headers, ending in a blank line, per the HTTP/1.1 grammar.</li>
+<li>The request is sent over Module 1's socket via <code>send_all()</code>.</li>
+<li><code>_recv_until(sock, b"\r\n\r\n")</code> reads just enough to capture the status line and headers — stopping exactly at the blank line that separates headers from body, however many <code>recv()</code> calls that takes.</li>
+<li>The status line and headers are parsed out of that header block.</li>
+<li>The response's own framing decides what happens next: a <code>Content-Length</code> header means "read exactly this many more bytes." A <code>Transfer-Encoding: chunked</code> header means "read labeled chunks until a zero-size one." Neither present means fall back to reading until the connection closes — the last resort, not the plan.</li>
+<li>The socket is closed, and a fully-parsed <code>HTTPResponse</code> (status, headers, body) is returned — no partial reads, no guessing.</li>
+</ol>
+
+<h2 data-num="03">A Map of the Wire Format</h2>
+<div class="diagram-box">
+<div class="kv-diagram">
+REQUEST (sent):
+  GET / HTTP/1.1\r\n
+  Host: example.com\r\n
+  Connection: close\r\n
+  User-Agent: FromScratchBrowser/0.1 (educational)\r\n
+  Accept: */*\r\n
+  \r\n                     <- blank line: end of headers, no body on a GET
+
+RESPONSE (received), Content-Length framing:
+  HTTP/1.1 200 OK\r\n
+  Content-Type: text/html\r\n
+  Content-Length: 137\r\n
+  \r\n                     <- _recv_until() stops HERE
+  &lt;html&gt;...&lt;/html&gt;         <- then read EXACTLY 137 more bytes, stop
+
+RESPONSE (received), chunked framing:
+  HTTP/1.1 200 OK\r\n
+  Transfer-Encoding: chunked\r\n
+  \r\n
+  7\r\n                    <- next chunk is 7 (hex) bytes
+  Hello, \r\n
+  6\r\n                    <- next chunk is 6 bytes
+  World!\r\n
+  0\r\n                    <- zero-size chunk = end of body
+  \r\n
+</div>
+<p class="diagram-caption">two different framings, same job: tell the reader exactly when to stop, without relying on the connection closing</p>
+</div>
+
+<h2 data-num="04">The Code, Explained</h2>
+
+<p>The precedence check is the single most important control-flow decision in the module:</p>
+<div class="filename">http_client.py</div>
+<pre><code class="language-python">if "content-length" in headers:
+    length = int(headers["content-length"])
+    body, _ = _recv_exact(sock, length, leftover)
+elif headers.get("transfer-encoding", "").lower() == "chunked":
+    body = _read_chunked(sock, leftover)
+else:
+    # last resort — see DECISIONS.md
+    ...</code></pre>
+<p><code>Content-Length</code> is checked first because the spec (RFC
+9112 §6.3) defines that precedence explicitly — a response is not
+supposed to send both in conflict, but if a `Content-Length` is present,
+it wins. This isn't a guess at "what's more common"; it's copying the
+spec's own stated order.</p>
+
+<p>The chunked decoder's loop mirrors the wire format almost line for line:</p>
+<div class="filename">http_client.py</div>
+<pre><code class="language-python">while True:
+    size_line, buf = _recv_until(sock, b"\r\n", buf)
+    chunk_size = int(size_line.split(b";")[0], 16)   # hex!
+    if chunk_size == 0:
+        _, buf = _recv_until(sock, b"\r\n", buf)
+        break
+    chunk_data, buf = _recv_exact(sock, chunk_size, buf)
+    body += chunk_data
+    _, buf = _recv_until(sock, b"\r\n", buf)          # trailing CRLF after data</code></pre>
+<p>Note <code>int(size_line, 16)</code> — chunk sizes are written in
+<strong>hexadecimal</strong>, not decimal. This is a real, easy mistake:
+forgetting the base-16 conversion silently "works" for chunk sizes under
+10 (where hex and decimal digits look the same) and then corrupts
+anything larger, which is exactly the kind of bug that's invisible in a
+quick test and real in production — one more reason to test against a
+known chunk size like <code>7</code>/<code>6</code> below, not just eyeball it.</p>
+
+<h2 data-num="05">Limits / What You Cannot Do Yet</h2>
+<div class="compare-grid">
+  <div class="compare-col cant">
+    <h4>Can't do yet</h4>
+    <ul>
+      <li>Talk to any <code>https://</code> URL — this only works over plain, unencrypted HTTP (Module 4)</li>
+      <li>Follow redirects (3xx responses) automatically</li>
+      <li>Reuse a connection for multiple requests (we always ask for, and structure around, one request per connection)</li>
+    </ul>
+  </div>
+  <div class="compare-col can">
+    <h4>Can do now</h4>
+    <ul>
+      <li>Send a spec-correct HTTP/1.1 request with the mandatory <code>Host</code> header</li>
+      <li>Correctly parse a response's status, headers, and body</li>
+      <li>Determine the body's end from <code>Content-Length</code> <em>or</em> chunked framing — not from the connection closing</li>
+    </ul>
+  </div>
+</div>
+
+<h2 data-num="06">Run It</h2>
+<pre><code class="language-bash">cd 03_http_from_scratch
+python http_client.py</code></pre>
+<p>Exact output from a real run, unedited:</p>
+<pre><code>======================================================================
+PART 1 — real request against a real server
+======================================================================
+status: 200 OK
+headers: {'date': 'Thu, 06 Aug 2026 06:34:11 GMT', 'content-type': 'text/html', 'transfer-encoding': 'chunked', 'connection': 'close', 'server': 'cloudflare', 'last-modified': 'Sat, 01 Aug 2026 09:39:03 GMT', 'allow': 'GET, HEAD', 'accept-ranges': 'bytes', 'age': '7628', 'cf-cache-status': 'HIT', 'cf-ray': 'a26c03ab1ea032fa-OSL'}
+body length: 559 bytes
+body starts with: b'&lt;!doctype html&gt;&lt;html lang="en"&gt;&lt;head&gt;&lt;title&gt;Example Domain&lt;/'
+
+======================================================================
+PART 2 — hand-rolled local server sending chunked encoding
+======================================================================
+status: 200 OK
+headers: {'transfer-encoding': 'chunked', 'connection': 'close'}
+decoded body: b'Hello, World!'
+matches expected b'Hello, World!': True</code></pre>
+<p><strong>Worth pausing on:</strong> the real request in Part 1 came
+back <code>transfer-encoding: chunked</code>, even though we asked for
+<code>Connection: close</code>. This is not a fabricated example chosen
+to justify chunked support — it's what `example.com`'s server (behind
+Cloudflare) actually sent back on this run. Had `parse_response()` only
+known how to read-until-closed, it would have gotten this specific real
+response right by luck (the connection did also close), but Part 2 proves
+the chunked-decoding logic itself is correct independent of that luck.</p>
+
+<div class="callout callout-trouble">
+<div class="callout-label">⚠ Getting a blank or broken result?</div>
+<ul>
+<li><strong><code>ConnectionError: connection closed before body was fully received</code>:</strong> the server sent a <code>Content-Length</code> that doesn't match what it actually sent — rare, but possible with misbehaving servers. Try a different URL.</li>
+<li><strong>Part 2 hangs:</strong> the local test server thread didn't start in time — check that port 0 (ephemeral) binding isn't blocked by your OS's firewall for loopback traffic.</li>
+<li><strong>Different headers than shown above:</strong> expected — <code>date</code>, <code>age</code>, and <code>cf-ray</code> change on every real request. What should stay constant: <code>status: 200 OK</code> and a body starting with <code>&lt;!doctype html&gt;</code>.</li>
+</ul>
+</div>
+
+<h2 data-num="07">Brain Exercise</h2>
+<div class="callout callout-brain">
+<div class="callout-label">🧠 Think before you reveal</div>
+<p><strong>Suppose a buggy server sends both a <code>Content-Length: 13</code>
+header AND a <code>Transfer-Encoding: chunked</code> body, and they
+disagree about the actual length. Given the exact order of the <code>if
+/ elif</code> chain in <code>parse_response()</code>, what does this
+client do — and is that the safe choice?</strong></p>
+<details>
+<summary>Reveal the answer</summary>
+<p>Because <code>content-length</code> is checked first, this client
+would call <code>_recv_exact(sock, 13, ...)</code> and treat exactly 13
+bytes as the entire body — completely ignoring the chunked framing that
+follows. If the real chunked data is longer, the leftover bytes are just
+never read (and are discarded when the socket closes). This is, in fact,
+the spec-mandated behavior in ambiguous cases like this — RFC 9112 treats
+a response with conflicting length signals as a request smuggling risk
+and specifically calls out that implementations should prefer rejecting
+such responses outright in security-sensitive contexts, rather than
+guessing which framing is "really" correct. Our client doesn't reject it
+(that's a real gap Module 25's security discussion revisits), but
+checking <code>Content-Length</code> first at least matches the spec's
+stated precedence rather than an arbitrary one.</p>
+</details>
+</div>
+
+<h2 data-num="08">There Are No Dumb Questions</h2>
+
+<div class="qa-item">
+<div class="qa-q">Why does the chunked decoder need <code>int(size_line, 16)</code> instead of just <code>int(size_line)</code>?</div>
+<div class="qa-a">Because chunk sizes are written in hexadecimal in the actual wire format — <code>7</code> means 7 either way, but <code>1a</code> means 26, not "invalid number." Forgetting the base argument doesn't crash on small examples (making it a genuinely sneaky bug) — it silently produces wrong lengths only once a chunk is 16 bytes or larger.</div>
+</div>
+
+<div class="qa-item">
+<div class="qa-q">Why parse the status line and headers with plain string splitting instead of a regex?</div>
+<div class="qa-a">HTTP's header grammar is genuinely simple enough (each line is `key: value`, separated by CRLF, terminated by a blank line) that <code>str.split</code>/<code>str.partition</code> are sufficient and more readable than a regex would be — unlike HTML (Module 5), which needs a real state machine because its grammar has recursive, context-sensitive structure that headers don't.</div>
+</div>
+
+<div class="qa-item">
+<div class="qa-q">Is `iso-8859-1` the right encoding for decoding the header block?</div>
+<div class="qa-a">For the header <em>names and structure</em>, yes — RFC 9110 defines header field values as restricted to a byte range that ISO-8859-1 (Latin-1) can always decode without error, which is why real HTTP libraries use it there. The <em>body</em> is a completely separate decoding decision, governed by the <code>Content-Type</code> header's own charset — which is exactly the point made in <a href="../prereqs/bytes_and_encoding.html">the bytes &amp; encoding prereq</a>.</div>
+</div>
+
+<div class="qa-item">
+<div class="qa-q">Why build a whole local test server just to test 13 bytes of chunked data?</div>
+<div class="qa-a">Because a real website's framing choice (Content-Length vs. chunked) can change at any time, isn't something we control, and turned out to actually flip between two runs of this very module during development. A test that depends on a live third party's current behavior isn't really testing our code — it's testing today's internet. The local server pins the input exactly, so "does our chunked decoder work" has one deterministic answer.</div>
+</div>
+
+<h2 data-num="09">What's Next</h2>
+<p>Everything in this module ran over plain, unencrypted <code>http://</code>.
+Module 4 takes the exact same <code>format_request</code> and
+<code>parse_response</code> functions — unmodified — and wraps the socket
+itself in TLS, proving that encryption is a separate layer underneath
+HTTP, not something HTTP-parsing code needs to know anything about.</p>
+
+<div class="module-nav">
+  <a href="../02_url_parser/tutorial.html"><span class="dir">← Previous</span>Module 2: URL Parser</a>
+  <a class="next" href="../04_https_tls/tutorial.html"><span class="dir">Next →</span>Module 4: TLS via Socket Wrapping</a>
+</div>
+
+</body>
+</html>
