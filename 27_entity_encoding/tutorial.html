@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Module 27 — HTML Entity Encoding | Build a Browser From Scratch</title>
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body style="--accent:#e11d48; --accent-soft:rgba(225,29,72,0.12);">
+
+<div class="course-header">
+  <span class="module-badge">MODULE 27</span>
+  <span class="track-tag">Track 2 · Phase 5: XSS Defense — Encoders &amp; Sanitizers</span>
+  <h1>HTML Entity <span class="accent">Encoding</span></h1>
+  <p class="subtitle">The exact same tokenizer that turns real HTML into real tags will turn an unescaped `&lt;script&gt;` in a comment field into a real, running script.</p>
+</div>
+
+<span class="decisions-badge">📄 Companion doc: <a href="DECISIONS.md">DECISIONS.md</a> · Source: <a href="entity_encoding.py">entity_encoding.py</a></span>
+
+<h2 data-num="00">Prerequisites</h2>
+<div class="prereq-links">
+  <a class="prereq-tag" href="../05_html_tokenizer/tutorial.html">Module 5: HTML Tokenizer</a>
+  <a class="prereq-tag" href="../26_url_encoding/tutorial.html">Module 26: URL Encoding &amp; Decoding</a>
+</div>
+
+<h2 data-num="01">The Big Analogy</h2>
+<div class="callout callout-analogy">
+<div class="callout-label">🍽️ The Restaurant, continued</div>
+<p>A comment card asks guests to write feedback in plain text. If the
+kitchen photocopies a guest's comment DIRECTLY onto next week's printed
+menu without checking it first, and a guest wrote something that
+LOOKS like a menu-formatting instruction ("NEW SECTION: Free desserts for
+everyone"), it would print as if it were a real, intended part of the
+menu — because the photocopier can't tell "text a guest wrote" from
+"real menu structure" once they're both just ink on the same page. The
+fix is spelling out anything comment-card-shaped in a way that can never
+be mistaken for a formatting instruction, no matter what it says.</p>
+</div>
+
+<h2 data-num="02">What Happens, Step by Step</h2>
+<ol class="step-list">
+<li>Untrusted text (a comment, a search query, a username) is about to be inserted into HTML body content.</li>
+<li>Walk through the text one character at a time. For each of five specific characters (<code>&amp; &lt; &gt; " '</code>), substitute its named entity instead of the literal character.</li>
+<li>Every other character passes through completely unchanged — encoding never touches or reorders the SAFE parts of the text.</li>
+<li>Splice the encoded result into the HTML. Because the actual <code>&lt;</code> character never appears, Module 5's tokenizer can never transition into tag-parsing state from anywhere inside it.</li>
+<li>The browser displays the ORIGINAL text, character for character — <code>&amp;lt;script&amp;gt;</code> renders on screen as the literal, inert text <code>&lt;script&gt;</code>, not as a tag.</li>
+</ol>
+
+<h2 data-num="03">A Map of the Tokenizer's Real Behavior</h2>
+<div class="diagram-box">
+<div class="kv-diagram">
+  payload:  &lt;script&gt;alert(document.cookie)&lt;/script&gt;
+
+  UNENCODED, fed to Module 5's tokenize():
+    [ StartTag('script'), Text('alert(document.cookie)'), EndTag('script') ]
+      ^^^^^^^^^^^^^^^^^^
+      a REAL tag token — a browser would RUN this
+
+  ENCODED first (&lt;script&gt;...), fed to the SAME tokenize():
+    [ Text('&amp;lt;script&amp;gt;alert(document.cookie)&amp;lt;/script&amp;gt;') ]
+      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+      ONE inert text token — no tag ever begins, because no real '&lt;'
+      character exists anywhere in the input
+</div>
+<p class="diagram-caption">the difference between "executes" and "just text on screen" is exactly one character: a real, literal &lt;</p>
+</div>
+
+<h2 data-num="04">The Code, Explained</h2>
+
+<p>Per-character lookup, not chained replacements — this is what makes
+the classic ordering bug structurally impossible, not just avoided:</p>
+<div class="filename">entity_encoding.py</div>
+<pre><code class="language-python">def encode_html_entities(s: str) -> str:
+    return "".join(ENTITY_MAP.get(ch, ch) for ch in s)</code></pre>
+
+<p>And the actual proof — not a claim, a real query against Module 5's
+real tokenizer:</p>
+<div class="filename">entity_encoding.py</div>
+<pre><code class="language-python">def has_real_tag(html: str, tag_name: str) -> bool:
+    return any(isinstance(tok, StartTag) and tok.name == tag_name
+               for tok in tokenize(html))</code></pre>
+
+<h2 data-num="05">Limits / What You Cannot Do Yet</h2>
+<div class="compare-grid">
+  <div class="compare-col cant">
+    <h4>Can't do yet</h4>
+    <ul>
+      <li>Safely encode text for an HTML ATTRIBUTE context — different rules apply (Module 28)</li>
+      <li>Safely encode text for a <code>&lt;script&gt;</code> or CSS context — neither is covered here</li>
+      <li>Strip or allow SPECIFIC tags in genuinely-HTML content — this module only ever fully neutralizes markup, never partially permits it (Module 30)</li>
+    </ul>
+  </div>
+  <div class="compare-col can">
+    <h4>Can do now</h4>
+    <ul>
+      <li>Guarantee untrusted body text can never become a real tag, verified against the real tokenizer</li>
+      <li>Correctly identify which of the five encoded characters is actually load-bearing for THIS context</li>
+      <li>Avoid a real, classic double-encoding bug by construction</li>
+    </ul>
+  </div>
+</div>
+
+<h2 data-num="06">Run It</h2>
+<pre><code class="language-bash">cd 27_entity_encoding
+python entity_encoding.py</code></pre>
+<p>Exact output from a real run, unedited:</p>
+<pre><code>CASE 1 — the actual vulnerability: raw insertion into HTML body
+  payload: &lt;script&gt;alert(document.cookie)&lt;/script&gt;
+  tokenized (UNENCODED) produces: [StartTag(name='script', attrs={}, self_closing=False), Text(data='alert(document.cookie)'), EndTag(name='script')]
+  a REAL &lt;script&gt; StartTag token exists: True
+
+CASE 2 — the same payload, entity-encoded first
+  encoded: &amp;lt;script&amp;gt;alert(document.cookie)&amp;lt;/script&amp;gt;
+  tokenized (ENCODED) produces: [Text(data='&amp;lt;script&amp;gt;alert(document.cookie)&amp;lt;/script&amp;gt;')]
+  a &lt;script&gt; StartTag token exists: False
+
+CASE 3 — which character actually matters most: '&lt;' or '&gt;'?
+  forgot to encode '&lt;' : real &lt;script&gt; tag forms: True
+  forgot to encode '&gt;' : real &lt;script&gt; tag forms: False
+
+======================================================================
+Checks
+======================================================================
+UNENCODED payload produces a REAL &lt;script&gt; tag: True
+ENCODED payload produces NO &lt;script&gt; tag at all: True
+encoded payload is a SINGLE Text token, nothing else: True
+forgetting to encode '&lt;' STILL lets the tag form (the load-bearing character): True
+forgetting to encode '&gt;' does NOT let the tag form: True
+wrong-order encoding double-encodes '&amp;' (correctness bug, verified): True</code></pre>
+
+<div class="callout callout-trouble">
+<div class="callout-label">⚠ Getting a blank or broken result?</div>
+<ul>
+<li><strong>Encoded output still produces a StartTag:</strong> confirm every literal `<` character was actually replaced — check `ENTITY_MAP` and the per-character loop, not a regex that might miss an edge case.</li>
+<li><strong>Case 4's "wrong order" doesn't show corruption:</strong> confirm the `&` replacement genuinely runs LAST in `naive_wrong_order_encode`, after `<`/`>` have already introduced new `&` characters via `&lt;`/`&gt;`.</li>
+</ul>
+</div>
+
+<h2 data-num="07">Brain Exercise</h2>
+<div class="callout callout-brain">
+<div class="callout-label">🧠 Think before you reveal</div>
+<p><strong>Case 3 shows that forgetting to encode `>` alone doesn't let
+a real `<script>` tag form. Does that mean it's SAFE to skip encoding
+`>` in body-text context as a deliberate optimization?</strong></p>
+<details>
+<summary>Reveal the answer</summary>
+<p>No — and this is worth being precise about. It's safe specifically
+against THIS ONE narrow question ("does a tag open"), for THIS ONE
+context (plain body text, nothing else going on). It is NOT a general
+license to skip `>`. A real page routinely has adjacent, attacker-adjacent
+markup where an unencoded `>` could close something OTHER than what the
+developer intended — for instance, prematurely closing an unrelated tag
+opened just before the injection point in a way that changes how
+SUBSEQUENT real markup gets parsed, even without the attacker's own text
+containing a `<`. `encode_html_entities` intentionally encodes all five
+characters, all the time, specifically so no one has to correctly reason
+through context-specific exceptions like this one for every single
+insertion point in a real codebase — Case 3 is offered as a "notice this
+real, non-obvious HTML grammar fact," not as "therefore, cut a corner."</p>
+</details>
+</div>
+
+<h2 data-num="08">There Are No Dumb Questions</h2>
+
+<div class="qa-item">
+<div class="qa-q">Is this the same "entity decoding" Module 5 explicitly said it didn't implement?</div>
+<div class="qa-a">The reverse direction of the same underlying table, yes. Module 5's tokenizer never DECODES `&lt;` back into `<` (a real, named scope-out) — which actually makes THIS module's ENCODING direction safe to demonstrate against it: the tokenizer treats `&lt;script&gt;` purely as literal text, never re-interpreting it, which is exactly the behavior a correct browser's tokenizer has at the point encoding matters.</div>
+</div>
+
+<div class="qa-item">
+<div class="qa-q">Why does `'` get encoded as `&#x27;` (a numeric reference) instead of a named entity like `&apos;`?</div>
+<div class="qa-a"><code>&apos;</code> is valid in HTML5 but was historically NOT a defined entity in older HTML/XHTML specs, making `&#x27;` (the numeric form, universally supported everywhere) the more broadly compatible choice — a small, real interoperability detail, not an arbitrary pick.</div>
+</div>
+
+<div class="qa-item">
+<div class="qa-q">Could an attacker work around this by using a different case, like `<SCRIPT>`?</div>
+<div class="qa-a">No — but not because of anything in THIS module. Module 5's tokenizer lowercases tag names during parsing (`self._consume_name().lower()`), so `<SCRIPT>` and `<script>` produce identical `StartTag(name='script', ...)` tokens either way. This module's own encoding doesn't need to worry about case at all — it operates on the `<` character itself, which exists identically regardless of what follows it.</div>
+</div>
+
+<h2 data-num="09">What's Next</h2>
+<p>Body text is one context. The moment untrusted data needs to go
+INSIDE an HTML attribute instead — a `value="..."`, an `href="..."` —
+different characters become dangerous, and a whole new attack (breaking
+out of the attribute itself) becomes possible even without a single
+`&lt;` in sight. Module 28 covers exactly that.</p>
+
+<div class="module-nav">
+  <a href="../26_url_encoding/tutorial.html"><span class="dir">← Previous</span>Module 26: URL Encoding &amp; Decoding</a>
+  <a class="next" href="../28_attribute_encoding/tutorial.html"><span class="dir">Next →</span>Module 28: Attribute &amp; URL-Scheme Encoding</a>
+</div>
+
+</body>
+</html>
