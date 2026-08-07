@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Prerequisites | Build a Browser From Scratch</title>
+<link rel="stylesheet" href="assets/course.css">
+</head>
+<body style="--accent:#a78bfa; --accent-soft:rgba(167,139,250,0.12);">
+
+<div class="course-header">
+  <span class="module-badge">PREREQUISITES</span>
+  <span class="track-tag">Read once, referenced everywhere</span>
+  <h1>The <span class="accent">Foundational Ideas</span></h1>
+  <p class="subtitle">The handful of primitives every module in this course assumes you already have a handle on — the way an OS course assumes you know what a register is before it explains a bootloader.</p>
+</div>
+
+<p>Every module's "00 Prerequisites" section links back to specific pages
+here instead of re-explaining these ideas inline. That's on purpose: a
+parser module shouldn't have to re-teach "what a tree is" every time it
+uses one. Read these eight pages once, then treat them as reference —
+skim back to one whenever a module's tag-link points at it.</p>
+
+<h2 data-num="">The Eight Ideas</h2>
+
+<table>
+<tr><th>Idea</th><th>What it underlies</th></tr>
+<tr><td><a href="prereqs/bytes_and_encoding.html">Bytes &amp; Text Encoding</a></td><td>Every module that touches raw network data or parses text (Modules 1, 3, 5, 7, 18)</td></tr>
+<tr><td><a href="prereqs/client_server_model.html">The Client–Server Request/Response Model</a></td><td>All of networking (Modules 1, 3, 4) and the chrome/navigation layer (Module 21)</td></tr>
+<tr><td><a href="prereqs/trees_and_recursion.html">Trees &amp; Recursive Traversal</a></td><td>DOM (Module 6), CSSOM (Module 7), layout (Modules 10–13), the JS AST (Module 18)</td></tr>
+<tr><td><a href="prereqs/state_machines.html">State Machines</a></td><td>Every tokenizer (Modules 5, 7, 18) and the event loop (Module 17)</td></tr>
+<tr><td><a href="prereqs/coordinate_systems.html">Coordinate Systems &amp; the Box Idea</a></td><td>Layout and the box model (Modules 10–13), paint (Module 14)</td></tr>
+<tr><td><a href="prereqs/event_driven_programming.html">Event-Driven Programming</a></td><td>The event loop (Module 17), DOM–JS bindings (Module 19), invalidation (Module 20)</td></tr>
+<tr><td><a href="prereqs/processes_and_threads.html">Processes vs. Threads</a></td><td>Multi-process tabs (Module 24) and the sandbox broker (Module 25)</td></tr>
+<tr><td><a href="prereqs/origins_and_security_boundary.html">Origins &amp; the Security Boundary</a></td><td>Cookies/storage (Module 22), same-origin policy (Module 23), sandboxing (Module 25)</td></tr>
+</table>
+
+<div class="callout callout-trouble">
+<div class="callout-label">⚠ You don't have to read these in order</div>
+<p>Unlike the numbered modules, these eight pages have no dependency order
+among themselves — jump to whichever one a module's tag-link sends you to.
+The only ordering rule is: read <a href="00_big_picture/tutorial.html">Module
+0</a> before any of these, so you know <em>why</em> each idea matters before
+you learn it.</p>
+</div>
+
+<p><a href="00_big_picture/tutorial.html">← Back to Module 0: The Big Picture</a> &nbsp;·&nbsp; <a href="01_raw_socket/tutorial.html">Skip to Module 1 →</a></p>
+
+</body>
+</html>
