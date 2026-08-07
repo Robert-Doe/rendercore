@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Module 30 — HTML Sanitization | Build a Browser From Scratch</title>
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body style="--accent:#881337; --accent-soft:rgba(136,19,55,0.20);">
+
+<div class="course-header">
+  <span class="module-badge">MODULE 30</span>
+  <span class="track-tag">Track 2 · Phase 5: XSS Defense — Encoders &amp; Sanitizers</span>
+  <h1>HTML <span class="accent">Sanitization</span></h1>
+  <p class="subtitle">Modules 27-29 encoded EVERYTHING away. This module has to let some of it through — and decide, precisely, how much.</p>
+</div>
+
+<span class="decisions-badge">📄 Companion doc: <a href="DECISIONS.md">DECISIONS.md</a> · Source: <a href="html_sanitization.py">html_sanitization.py</a></span>
+
+<h2 data-num="00">Prerequisites</h2>
+<div class="prereq-links">
+  <a class="prereq-tag" href="../06_dom_tree_builder/tutorial.html">Module 6: HTML Tree Builder</a>
+  <a class="prereq-tag" href="../28_attribute_encoding/tutorial.html">Module 28: Attribute &amp; URL-Scheme Encoding</a>
+</div>
+
+<h2 data-num="01">The Big Analogy</h2>
+<div class="callout callout-analogy">
+<div class="callout-label">🍽️ The Restaurant, continued</div>
+<p>A restaurant lets guests write a short note on their own comment card
+— maybe underline a word, maybe circle something — using a small,
+approved set of markers on the card itself. The staff doesn't ban
+markers entirely (that would make comment cards useless); they don't
+trust every possible mark a guest could make either. They check: is this
+mark one of the ones we specifically allow (underline, circle, a small
+star)? Anything else — a mark we've never seen before, a mark shaped
+like an official kitchen stamp — gets scraped off, while the guest's
+actual WORDS stay exactly where they were.</p>
+</div>
+
+<h2 data-num="02">What Happens, Step by Step</h2>
+<ol class="step-list">
+<li>Parse the untrusted HTML into a real DOM tree (Module 6) — the same tree-building logic used everywhere else in this course.</li>
+<li>Walk it bottom-up: a node's own children get sanitized FIRST, before deciding the node's own fate.</li>
+<li>If a node's tag is genuinely dangerous (<code>script</code>, <code>style</code>, <code>iframe</code>, ...), drop it and everything inside it — content included.</li>
+<li>If a node's tag isn't on the explicit allowlist (but isn't dangerous either), UNWRAP it — discard just the tag, keep its already-sanitized children in its place.</li>
+<li>For everything that survives as a real tag, filter its attributes down to an allowlist per tag — and separately, check any surviving <code>href</code>/<code>src</code> VALUE for a dangerous URL scheme, even though the attribute NAME itself was allowed.</li>
+</ol>
+
+<h2 data-num="03">A Map of One Sanitization Pass</h2>
+<div class="diagram-box">
+<div class="kv-diagram">
+  INPUT:
+    &lt;p&gt;Hello &lt;b&gt;world&lt;/b&gt;&lt;/p&gt;
+    &lt;script&gt;alert(document.cookie)&lt;/script&gt;
+    &lt;a href="javascript:alert(1)"&gt;click here&lt;/a&gt;
+    &lt;img src="x.png" onerror="alert(1)"&gt;
+    &lt;fancybox&gt;weird custom tag&lt;/fancybox&gt;
+    &lt;div onclick="alert(1)"&gt;Click me&lt;/div&gt;
+
+  script         -> DANGEROUS_TAGS      -> DROPPED, subtree and all
+  a href="javascript:..."  -> tag ALLOWED, but href SCHEME dangerous
+                              -> href attribute dropped, &lt;a&gt; kept, text kept
+  img onerror=...          -> tag ALLOWED, onerror NOT in allowlist
+                              -> onerror dropped, src (safe scheme) kept
+  fancybox                 -> not dangerous, not allowed -> UNWRAPPED
+                              -> tag gone, "weird custom tag" text SURVIVES
+  div onclick=...          -> tag ALLOWED, onclick NOT in allowlist
+                              -> onclick dropped, div + "Click me" text kept
+
+  OUTPUT (tags): p, b, a, img, div      <- script and fancybox both gone,
+                                            for two DIFFERENT reasons
+</div>
+<p class="diagram-caption">every removal has a specific, checkable reason — never "delete everything to be safe"</p>
+</div>
+
+<h2 data-num="04">The Code, Explained</h2>
+
+<p>The unwrap-vs-drop distinction is the single `if` that makes this
+module's whole design point visible:</p>
+<div class="filename">html_sanitization.py</div>
+<pre><code class="language-python">if child.tag in DANGEROUS_TAGS:
+    continue                                   # drop tag AND content
+child.children = sanitize_children(child.children)   # recurse first
+if child.tag in ALLOWED_TAGS:
+    result.append(child)                        # keep the tag
+else:
+    result.extend(child.children)                # UNWRAP: keep content, drop the tag</code></pre>
+
+<p>And the URL-value check that runs independently of the
+attribute-name allowlist:</p>
+<div class="filename">html_sanitization.py</div>
+<pre><code class="language-python">if name in URL_ATTRS and is_dangerous_url_scheme(value):
+    continue   # allowed ATTRIBUTE NAME, dangerous VALUE — dropped anyway</code></pre>
+
+<h2 data-num="05">Limits / What You Cannot Do Yet</h2>
+<div class="compare-grid">
+  <div class="compare-col cant">
+    <h4>Can't do yet</h4>
+    <ul>
+      <li>Tag-specific attribute nuance beyond a flat per-tag allowlist (e.g. allowing <code>class</code> only for specific known-safe values)</li>
+      <li>CSS sanitization — a <code>style</code> attribute's VALUE isn't checked at all (and <code>style</code> the TAG is dropped outright)</li>
+      <li>Preserve HTML comments — dropped unconditionally (DECISIONS.md)</li>
+    </ul>
+  </div>
+  <div class="compare-col can">
+    <h4>Can do now</h4>
+    <ul>
+      <li>Remove genuinely dangerous tags, subtree and all</li>
+      <li>Preserve real, safe structure and text through unwrapping rather than destroying everything unrecognized</li>
+      <li>Catch a dangerous URL VALUE even when the attribute NAME carrying it is entirely legitimate</li>
+    </ul>
+  </div>
+</div>
+
+<h2 data-num="06">Run It</h2>
+<pre><code class="language-bash">cd 30_html_sanitization
+python html_sanitization.py</code></pre>
+<p>Exact output from a real run, unedited:</p>
+<pre><code>Sanitized tree (every surviving Element)
+  &lt;#document&gt; attrs={}
+  &lt;p&gt; attrs={}
+  &lt;b&gt; attrs={}
+  &lt;a&gt; attrs={}
+  &lt;img&gt; attrs={'src': 'x.png'}
+  &lt;div&gt; attrs={}
+
+======================================================================
+Checks — walking the REAL sanitized tree, not the output string
+======================================================================
+NO dangerous tag survived anywhere in the tree: True
+NO 'on*' event handler attribute survived anywhere: True
+NO surviving href/src value uses a dangerous scheme: True
+the javascript: href was dropped entirely (not just the tag): True
+safe structure was PRESERVED — &lt;b&gt;world&lt;/b&gt; still exists as a real Element: True
+the unknown &lt;fancybox&gt; tag was unwrapped, but its TEXT survived: True
+the allowed &lt;div&gt; survived, but its onclick did not: True
+'Click me' text (from inside the sanitized div) survived: True
+'Hello world' text survived: True
+the &lt;script&gt;'s CONTENT ('alert(document.cookie)') does NOT survive anywhere, even as stray text: True</code></pre>
+
+<div class="callout callout-trouble">
+<div class="callout-label">⚠ Getting a blank or broken result?</div>
+<ul>
+<li><strong>Script content survives as stray text:</strong> confirm `DANGEROUS_TAGS` handling uses `continue` BEFORE recursing into the child's children — recursing first would sanitize and preserve the script's text content as if it were ordinary text.</li>
+<li><strong>Every unknown tag's content disappears instead of unwrapping:</strong> check the `else` branch extends the result list with `child.children`, not skips the child entirely.</li>
+</ul>
+</div>
+
+<h2 data-num="07">Brain Exercise</h2>
+<div class="callout callout-brain">
+<div class="callout-label">🧠 Think before you reveal</div>
+<p><strong>Why does `_sanitize_attrs` check the URL scheme SEPARATELY
+from the name-based allowlist, instead of just adding
+`href="javascript:*"` as a special denylist pattern the allowlist
+also consults?</strong></p>
+<details>
+<summary>Reveal the answer</summary>
+<p>Because the name-allowlist and the value-scheme-check are answering
+two genuinely different questions, and conflating them back into one
+combined allowlist would reintroduce exactly the denylist fragility this
+module's whole design tries to avoid. "Is `href` a permitted attribute
+NAME for `<a>`?" is a simple, closed, easy-to-get-right yes/no question.
+"Is this particular URL VALUE safe?" is open-ended — Module 28 already
+had to account for a real bypass technique (a hidden tab character) that
+a naive check missed, and future new bypass techniques may still be
+discovered. Keeping the two checks separate means the URL-scheme logic
+can be improved, extended, or reused (exactly as this module reuses
+Module 28's function unmodified) without touching the attribute-name
+allowlist at all, and vice versa.</p>
+</details>
+</div>
+
+<h2 data-num="08">There Are No Dumb Questions</h2>
+
+<div class="qa-item">
+<div class="qa-q">Why is this module so much more complex than Modules 27-29?</div>
+<div class="qa-a">Because it's solving a genuinely harder problem. Modules 27-29 all had the luxury of "neutralize everything, no exceptions" — there was no requirement to preserve any structure. Sanitization exists specifically for cases where SOME real HTML has to survive (a comment system that allows bold text and links), which means every single tag and attribute needs an explicit, considered decision instead of one blanket rule.</div>
+</div>
+
+<div class="qa-item">
+<div class="qa-q">Is dropping HTML comments unconditionally overly cautious?</div>
+<div class="qa-a">For most ordinary content, probably somewhat — the vast majority of user-submitted comments containing an HTML comment are entirely harmless. But comments have a real, documented history of being involved in parser-differential attacks (different parsers historically disagreeing about where a comment ends), and the actual VALUE of preserving user-submitted HTML comments in typical rich-text content is close to zero. This module makes the conservative call explicitly, rather than leaving it as an unexamined default.</div>
+</div>
+
+<div class="qa-item">
+<div class="qa-q">Could this sanitizer be bypassed the way Module 28's naive scheme check was?</div>
+<div class="qa-a">Its URL-scheme check specifically reuses Module 28's ALREADY-FIXED version (`is_dangerous_url_scheme`, not the naive one), so the tab-hiding bypass Module 28 demonstrated is already closed here. That said, this module's own allowlists are deliberately small and illustrative, not exhaustively researched against every historical HTML sanitizer bypass technique — a real production sanitizer (like DOMPurify) encodes years of accumulated, hard-won knowledge about edge cases this module doesn't attempt to replicate.</div>
+</div>
+
+<h2 data-num="09">What's Next</h2>
+<p>Every module in this phase so far has assumed the sanitization or
+encoding happens on the SERVER, before HTML ever reaches a browser.
+Module 31, the final module in this phase, shows that even perfectly
+sanitized text can still become dangerous depending on which JavaScript
+API a page's OWN client-side script uses to insert it — the actual,
+final mechanism behind DOM-based XSS.</p>
+
+<div class="module-nav">
+  <a href="../29_header_injection/tutorial.html"><span class="dir">← Previous</span>Module 29: HTTP Header Injection Prevention</a>
+  <a class="next" href="../31_dom_xss_sink/tutorial.html"><span class="dir">Next →</span>Module 31: The DOM XSS Sink</a>
+</div>
+
+</body>
+</html>
