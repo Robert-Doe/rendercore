@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Module 29 — HTTP Header Injection Prevention | Build a Browser From Scratch</title>
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body style="--accent:#9f1239; --accent-soft:rgba(159,18,57,0.16);">
+
+<div class="course-header">
+  <span class="module-badge">MODULE 29</span>
+  <span class="track-tag">Track 2 · Phase 5: XSS Defense — Encoders &amp; Sanitizers</span>
+  <h1>HTTP Header <span class="accent">Injection Prevention</span></h1>
+  <p class="subtitle">No HTML. No script. No browser even required for the attack itself — two bytes, `\r\n`, are the entire vulnerability.</p>
+</div>
+
+<span class="decisions-badge">📄 Companion doc: <a href="DECISIONS.md">DECISIONS.md</a> · Source: <a href="header_injection.py">header_injection.py</a></span>
+
+<h2 data-num="00">Prerequisites</h2>
+<div class="prereq-links">
+  <a class="prereq-tag" href="../03_http_from_scratch/tutorial.html">Module 3: HTTP/1.1 From Scratch</a>
+</div>
+
+<h2 data-num="01">The Big Analogy</h2>
+<div class="callout callout-analogy">
+<div class="callout-label">🍽️ The Restaurant, continued</div>
+<p>A ticket printer separates each instruction with a line break — one
+instruction per line, always. If a guest's freely-typed note ("no onions,
+please") is pasted directly onto the ticket and that note happens to
+CONTAIN a line break followed by something that looks like a real
+instruction ("no onions\ncomp this whole table's bill"), the printer has
+no way to tell the difference — it just sees two lines, both formatted
+exactly like real instructions, because line breaks are ALL that
+separates one instruction from the next.</p>
+</div>
+
+<h2 data-num="02">What Happens, Step by Step</h2>
+<ol class="step-list">
+<li>A server takes some untrusted input (a cookie value, a query parameter) and reflects it into one of its OWN response headers.</li>
+<li>If that input contains a raw <code>\r\n</code> (CRLF), and it's inserted without sanitization, the resulting raw response bytes now contain what LOOKS like a real header boundary — because CRLF <em>is</em> the header boundary, to any parser, real or forged.</li>
+<li>A real client (Module 3's <code>parse_response</code>) receives these bytes over a real socket and splits the header block on <code>\r\n</code>, exactly as it's supposed to — with no way to know one of those lines was smuggled in.</li>
+<li>The forged header(s) — including, in this module's demo, a fake <code>Set-Cookie</code> — end up in the client's parsed <code>headers</code> dict, indistinguishable from genuine ones.</li>
+<li>Stripping <code>\r</code>/<code>\n</code> from the untrusted value BEFORE it's inserted removes the only character sequence that could ever be mistaken for a header boundary — the payload survives, intact, as one line.</li>
+</ol>
+
+<h2 data-num="03">A Map of the Raw Bytes</h2>
+<div class="diagram-box">
+<div class="kv-diagram">
+UNSANITIZED — raw bytes actually sent over the socket:
+
+  HTTP/1.1 200 OK\r\n
+  Content-Type: text/plain\r\n
+  Content-Language: en\r\n
+  X-Injected: true\r\n          <- attacker's payload, now its OWN header line
+  Set-Cookie: admin=true\r\n    <- and this one too — a REAL forged cookie
+  Content-Length: 5\r\n
+  \r\n
+  hello
+
+  Module 3's parse_response() sees FIVE headers, all "real":
+  {content-type, content-language, x-injected, set-cookie, content-length}
+
+
+SANITIZED — \r\n stripped from the value first:
+
+  Content-Language: enX-Injected: trueSet-Cookie: admin=true\r\n
+
+  Module 3's parse_response() sees ONE content-language header,
+  its value an ugly but harmless, structurally inert single line.
+</div>
+<p class="diagram-caption">the exact same information, the exact same characters — only whether they form a NEW LINE decides whether it's an attribute value or an attack</p>
+</div>
+
+<h2 data-num="04">The Code, Explained</h2>
+
+<p>The entire fix is two `.replace()` calls:</p>
+<div class="filename">header_injection.py</div>
+<pre><code class="language-python">def sanitize_header_value(value: str) -> str:
+    return value.replace("\r", "").replace("\n", "")</code></pre>
+
+<p>And the proof runs the attack against a REAL client, over a REAL
+socket — not a string comparison:</p>
+<div class="filename">header_injection.py</div>
+<pre><code class="language-python">sock.sendall(b"GET / HTTP/1.1\r\n...")
+response = parse_response(sock)   # Module 3, completely unmodified
+"x-injected" in response.headers   # True, for the unsanitized case</code></pre>
+
+<h2 data-num="05">Limits / What You Cannot Do Yet</h2>
+<div class="compare-grid">
+  <div class="compare-col cant">
+    <h4>Can't do yet</h4>
+    <ul>
+      <li>Reject the whole request/response outright (this module strips; a production system might prefer a hard 400 error — see DECISIONS.md)</li>
+      <li>Prevent request-header injection (client → server) — this module targets the more dangerous response direction only</li>
+    </ul>
+  </div>
+  <div class="compare-col can">
+    <h4>Can do now</h4>
+    <ul>
+      <li>Prevent a real, end-to-end response-splitting attack, verified against a real client over a real socket</li>
+      <li>Preserve the attacker's full payload as harmless data rather than silently dropping it</li>
+    </ul>
+  </div>
+</div>
+
+<h2 data-num="06">Run It</h2>
+<pre><code class="language-bash">cd 29_header_injection
+python header_injection.py</code></pre>
+<p>Exact output from a real run, unedited:</p>
+<pre><code>CASE 1 — UNSANITIZED: a CRLF-containing value reflected into a header
+  Module 3's REAL parse_response() extracted these headers:
+    content-type: text/plain
+    content-language: en
+    x-injected: true
+    set-cookie: admin=true
+    content-length: 5
+
+CASE 2 — SANITIZED: the same value, CR/LF stripped first
+  Module 3's REAL parse_response() extracted these headers:
+    content-type: text/plain
+    content-language: enX-Injected: trueSet-Cookie: admin=true
+    content-length: 5
+
+======================================================================
+Checks
+======================================================================
+UNSANITIZED response has a REAL, fake 'x-injected' header, parsed as genuine by Module 3's real client: True
+UNSANITIZED response ALSO has a forged 'set-cookie' header — a real cookie-injection vector, not just a curiosity: True
+SANITIZED response has NO injected headers at all: True
+SANITIZED response's content-language contains the ENTIRE payload, squashed onto one line: True</code></pre>
+
+<div class="callout callout-trouble">
+<div class="callout-label">⚠ Getting a blank or broken result?</div>
+<ul>
+<li><strong>Local server hangs:</strong> same choreography risk as Modules 3/22/25's local test servers — confirm the client sends its request fully before the server tries to read it, and vice versa for the response.</li>
+<li><strong>Sanitized case still shows an injected header:</strong> double-check `sanitize_header_value` is actually being called BEFORE the value is spliced into `build_response`, not after.</li>
+</ul>
+</div>
+
+<h2 data-num="07">Brain Exercise</h2>
+<div class="callout callout-brain">
+<div class="callout-label">🧠 Think before you reveal</div>
+<p><strong>This module strips `\r` and `\n` independently, anywhere they
+appear. Would stripping only the literal two-character SEQUENCE `"\r\n"`
+(and leaving a lone `\r` or lone `\n` alone) be equally safe?</strong></p>
+<details>
+<summary>Reveal the answer</summary>
+<p>Not necessarily — and this is a real, historically relevant nuance.
+Different HTTP implementations have, at various points, been more
+lenient than the spec technically allows, sometimes treating a LONE
+`\n` (without a preceding `\r`) as a valid line terminator on its own —
+a compatibility accommodation for non-conforming clients/servers. If the
+sanitizer only stripped the exact two-character sequence `"\r\n"`, a
+payload containing just `"\n"` alone could still be treated as a line
+break by a lenient downstream parser, even though this module's OWN
+`sanitize_header_value` would have left it untouched by design. Stripping
+`\r` and `\n` INDEPENDENTLY, regardless of whether they appear together,
+removes both characters that any real-world HTTP implementation might
+treat as a line terminator — a stricter, safer choice specifically
+because it doesn't assume every downstream parser agrees on what counts
+as "a real line break."</p>
+</details>
+</div>
+
+<h2 data-num="08">There Are No Dumb Questions</h2>
+
+<div class="qa-item">
+<div class="qa-q">Is this really an "XSS" module, or a different category of bug?</div>
+<div class="qa-a">A different but closely related category — this course groups it into the same "encoders and sanitizers" phase because the underlying pattern is identical: untrusted data crossing into a context with its own syntax (HTTP headers, delimited by CRLF) without being neutralized first. The consequence here (forged headers, potentially a forged Set-Cookie or a fully split, attacker-controlled second response) is different from script execution, but the root cause and the fix shape are the same lesson repeated at a different layer.</div>
+</div>
+
+<div class="qa-item">
+<div class="qa-q">Why use `Content-Language` and not something more obviously dangerous, like directly injecting a `<script>` tag?</div>
+<div class="qa-a">Because this module's vulnerability lives entirely at the HTTP layer, before any HTML parsing happens at all — the forged `Set-Cookie` header is dangerous purely as HTTP, with zero HTML or script involved. Using an HTML example here would blur this module's actual point with Modules 27/28's point, which is specifically about markup/attribute contexts, not header contexts.</div>
+</div>
+
+<div class="qa-item">
+<div class="qa-q">Could an attacker use this to inject an entirely fake SECOND HTTP response, not just an extra header?</div>
+<div class="qa-a">Yes — that's the more advanced, classic form of "HTTP response splitting," where the injected content includes a full second status line, headers, and body, effectively smuggling a whole extra response that a shared cache or proxy might serve to a DIFFERENT, later user. This module demonstrates the simpler single-extra-header case, which is the same root vulnerability at smaller scale and easier to verify precisely.</div>
+</div>
+
+<h2 data-num="09">What's Next</h2>
+<p>Every module in this phase so far has fully neutralized untrusted
+data — encoded it, stripped it, blocked it outright. Module 30 tackles
+the harder version of the problem: safely allowing SOME real HTML
+through (for genuinely rich content like a comment system that permits
+bold text and links) without allowing everything through.</p>
+
+<div class="module-nav">
+  <a href="../28_attribute_encoding/tutorial.html"><span class="dir">← Previous</span>Module 28: Attribute &amp; URL-Scheme Encoding</a>
+  <a class="next" href="../30_html_sanitization/tutorial.html"><span class="dir">Next →</span>Module 30: HTML Sanitization</a>
+</div>
+
+</body>
+</html>
