@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Module 28 — Attribute &amp; URL-Scheme Encoding | Build a Browser From Scratch</title>
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body style="--accent:#be123c; --accent-soft:rgba(190,18,60,0.14);">
+
+<div class="course-header">
+  <span class="module-badge">MODULE 28</span>
+  <span class="track-tag">Track 2 · Phase 5: XSS Defense — Encoders &amp; Sanitizers</span>
+  <h1>Attribute <span class="accent">&amp; URL-Scheme Encoding</span></h1>
+  <p class="subtitle">Two attacks that need zero `&lt;` characters at all — one breaks out of a quote, the other hides in plain sight as a link.</p>
+</div>
+
+<span class="decisions-badge">📄 Companion doc: <a href="DECISIONS.md">DECISIONS.md</a> · Source: <a href="attribute_encoding.py">attribute_encoding.py</a></span>
+
+<h2 data-num="00">Prerequisites</h2>
+<div class="prereq-links">
+  <a class="prereq-tag" href="../27_entity_encoding/tutorial.html">Module 27: HTML Entity Encoding</a>
+  <a class="prereq-tag" href="../05_html_tokenizer/tutorial.html">Module 5: HTML Tokenizer</a>
+</div>
+
+<h2 data-num="01">The Big Analogy</h2>
+<div class="callout callout-analogy">
+<div class="callout-label">🍽️ The Restaurant, continued</div>
+<p>A ticket has a field: <code>special-request: "extra cheese"</code>,
+with quotes marking where the field starts and ends. If a guest's
+special request itself contains a closing quote, followed by their own
+fake new field — <code>"extra cheese" then also: send-my-address-to-kitchen-exit</code>
+— and the kitchen doesn't escape quotes inside the guest's own text, the
+form now genuinely HAS two fields, one real and one the guest just
+invented. Separately: even a field that's perfectly well-formed can
+still contain a dangerous INSTRUCTION as its entire, honest value —
+"forwarding-address: the walk-in freezer's master key drop-off" is a
+syntactically fine field that's still a bad idea to act on.</p>
+</div>
+
+<h2 data-num="02">What Happens, Step by Step</h2>
+<ol class="step-list">
+<li><strong>Part A:</strong> a value is inserted into a double-quoted HTML attribute (<code>value="..."</code>). If the value contains an unescaped <code>"</code>, everything after it is parsed as NEW markup, not as more of the value.</li>
+<li>If that new markup happens to look like <code>attrname="something"</code>, the tokenizer creates a REAL new attribute on the same tag — verified, not assumed, by checking Module 5's actual parsed <code>attrs</code> dict.</li>
+<li>Encoding the value first (reusing Module 27's encoder, which already escapes both quote characters) keeps the entire payload trapped inside the ORIGINAL attribute's value — no breakout, no new attribute.</li>
+<li><strong>Part B:</strong> separately, even a perfectly well-formed <code>href="..."</code> can be dangerous if its value is a <code>javascript:</code> URL — clicking it runs script, no quote-breakout needed at all.</li>
+<li>A scheme check has to account for a REAL browser quirk — tab/newline/CR characters are stripped from ANYWHERE in a URL before its scheme is determined — or an attacker can hide a tab inside the word "javascript" to slip past a naive check.</li>
+</ol>
+
+<h2 data-num="03">A Map of Both Attacks</h2>
+<div class="diagram-box">
+<div class="kv-diagram">
+PART A — attribute breakout
+
+  value = `" onmouseover="alert(document.cookie)`
+
+  &lt;input value="` + value + `"&gt;
+  &lt;input value="" onmouseover="alert(document.cookie)"&gt;
+                  ^                                    ^
+                  the FIRST closing quote ends "value"  a whole SECOND
+                  early -- everything after is NEW      attribute, real
+                  markup, not more of the value          and structural
+
+  Module 5 parses attrs as: {'value': '', 'onmouseover': 'alert(...)'}
+                                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                                          NEVER supposed to exist
+
+
+PART B — scheme check bypass
+
+  naive check:  url.strip().lower().startswith("javascript:")
+
+  payload:  "java\tscript:alert(1)"       <- tab hidden mid-word
+  naive:    "java\tscript:alert(1)".startswith("javascript:")  -> FALSE (bypassed!)
+
+  real browsers strip \t \r \n from ANYWHERE first:
+  fixed:    "javascript:alert(1)".startswith("javascript:")    -> TRUE (caught)
+</div>
+<p class="diagram-caption">both attacks work without a single literal `&lt;` — proof that entity encoding alone (Module 27) isn't the whole story</p>
+</div>
+
+<h2 data-num="04">The Code, Explained</h2>
+
+<p>Part A's fix is one function call — reusing, not reinventing:</p>
+<div class="filename">attribute_encoding.py</div>
+<pre><code class="language-python">def render_attr_safe(tag, attr_name, value):
+    return f'&lt;{tag} {attr_name}="{encode_html_entities(value)}"&gt;'</code></pre>
+
+<p>Part B's fix is a real browser quirk, mirrored deliberately:</p>
+<div class="filename">attribute_encoding.py</div>
+<pre><code class="language-python">def is_dangerous_url_scheme(url):
+    stripped = re.sub(r"[\t\r\n]", "", url).strip()   # strip from ANYWHERE, not just the ends
+    return stripped.lower().startswith(DANGEROUS_SCHEMES)</code></pre>
+
+<h2 data-num="05">Limits / What You Cannot Do Yet</h2>
+<div class="compare-grid">
+  <div class="compare-col cant">
+    <h4>Can't do yet</h4>
+    <ul>
+      <li>Handle single-quoted attributes (`value='...'`) — this module assumes double-quoted, the common convention</li>
+      <li>Catch every dangerous scheme ever discovered — the denylist here is small and illustrative, not exhaustive</li>
+      <li>Sanitize genuinely-HTML content while preserving SOME real tags — that's allowlist territory (Module 30)</li>
+    </ul>
+  </div>
+  <div class="compare-col can">
+    <h4>Can do now</h4>
+    <ul>
+      <li>Prevent a real, verified attribute-breakout attack</li>
+      <li>Catch a real, documented URL-scheme-check bypass technique that a naive implementation misses</li>
+    </ul>
+  </div>
+</div>
+
+<h2 data-num="06">Run It</h2>
+<pre><code class="language-bash">cd 28_attribute_encoding
+python attribute_encoding.py</code></pre>
+<p>Exact output from a real run, unedited:</p>
+<pre><code>PART A — CASE 1: the actual vulnerability, attribute breakout
+  constructed HTML: &lt;input value="" onmouseover="alert(document.cookie)"&gt;
+  Module 5 parses its attrs as: {'value': '', 'onmouseover': 'alert(document.cookie)'}
+  a REAL, INJECTED 'onmouseover' attribute now exists: True
+
+PART A — CASE 2: the same value, attribute-encoded first
+  constructed HTML: &lt;input value="&amp;quot; onmouseover=&amp;quot;alert(document.cookie)"&gt;
+  Module 5 parses its attrs as: {'value': '&amp;quot; onmouseover=&amp;quot;alert(document.cookie)'}
+  NO 'onmouseover' attribute exists — the whole payload stayed inside the ORIGINAL 'value' attribute: True
+
+PART B — CASE 3: a naive scheme check gets bypassed with a hidden tab
+  obvious payload: 'javascript:alert(document.cookie)'
+    naive check flags it as dangerous: True
+    fixed check flags it as dangerous: True
+  sneaky payload (tab hidden inside 'javascript'): 'java\tscript:alert(document.cookie)'
+    naive check flags it as dangerous: False
+    fixed check flags it as dangerous: True
+
+======================================================================
+Checks
+======================================================================
+UNSAFE render lets an attacker inject a REAL 'onmouseover' attribute: True
+SAFE render keeps the entire payload as inert VALUE text, no new attribute created: True
+the safe version's 'value' attribute contains the ENCODED payload whole: True
+the obvious javascript: payload is caught by BOTH checks: True
+the sneaky tab-hidden payload BYPASSES the naive check (real, documented bypass, reproduced): True
+the sneaky payload is CAUGHT by the fixed check: True</code></pre>
+
+<div class="callout callout-trouble">
+<div class="callout-label">⚠ Getting a blank or broken result?</div>
+<ul>
+<li><strong>CASE 2 still shows an injected attribute:</strong> confirm `encode_html_entities` (imported from Module 27) is genuinely encoding both `"` and `'` — check `ENTITY_MAP` in that module.</li>
+<li><strong>CASE 3's naive check catches the sneaky payload too (test seems "too safe"):</strong> double-check the payload string literally contains a tab character (`\t`) between "java" and "script", not a typo that Python is silently not interpreting as a real tab.</li>
+</ul>
+</div>
+
+<h2 data-num="07">Brain Exercise</h2>
+<div class="callout callout-brain">
+<div class="callout-label">🧠 Think before you reveal</div>
+<p><strong>Why doesn't `is_dangerous_url_scheme` just check for the
+SUBSTRING `"javascript:"` appearing anywhere in the URL, instead of
+requiring it at the very START (after stripping)? Wouldn't that also
+catch the tab-hidden bypass, more simply?</strong></p>
+<details>
+<summary>Reveal the answer</summary>
+<p>It would catch MORE than intended, in a way that breaks legitimate
+URLs — a substring check would flag something like
+`https://example.com/redirect?url=javascript:void(0)` as dangerous
+even though the actual SCHEME of that URL is `https`, not `javascript`;
+the dangerous-looking text is just part of a query parameter's value,
+never interpreted as a scheme by anything. A URL's scheme is
+specifically whatever comes before the FIRST `:`, at the very start of
+the string — checking `startswith` (after removing the browser-ignored
+whitespace characters) targets exactly that position, matching how a
+real URL parser actually determines "what kind of URL is this," rather
+than reacting to the word "javascript" showing up anywhere at all,
+which would produce real false positives on harmless URLs.</p>
+</details>
+</div>
+
+<h2 data-num="08">There Are No Dumb Questions</h2>
+
+<div class="qa-item">
+<div class="qa-q">Why does Module 5's tokenizer accept the injected `onmouseover` attribute at all — shouldn't a "secure" tokenizer reject weird-looking HTML?</div>
+<div class="qa-a">Because from the tokenizer's point of view, there's nothing weird about it — `<input value="" onmouseover="alert(...)">` is completely well-formed HTML with two ordinary attributes. The tokenizer's job (Module 5) is to correctly parse whatever HTML exists; it has no way to know one of those attributes was never supposed to be there. That's precisely why the defense has to happen BEFORE the HTML is constructed, not by hoping the parser will somehow notice something's off.</div>
+</div>
+
+<div class="qa-item">
+<div class="qa-q">Is stripping tab/newline/CR "from anywhere" in a URL a security feature browsers added, or something else?</div>
+<div class="qa-a">It originated as a compatibility/robustness feature — tolerating URLs that got accidentally line-wrapped or had stray whitespace inserted when copied from formatted text (like an email or a printed document). It's a great example of a totally reasonable compatibility decision that, combined with code elsewhere assuming "whitespace only appears at the ends," creates a real security gap — worth remembering any time a "helpful" normalization step exists anywhere in a system.</div>
+</div>
+
+<div class="qa-item">
+<div class="qa-q">Could `data:` URLs ever be legitimate, or should they always be blocked?</div>
+<div class="qa-a"><code>data:</code> URLs have real, legitimate uses (embedding small images directly in HTML/CSS without a separate request) — blocking them outright, as this module's simple denylist does, is a deliberately conservative choice appropriate for untrusted, attacker-controllable URL values specifically. A real system might allow `data:image/...` while still blocking `data:text/html`, which can also execute script — a more nuanced policy this module's binary denylist doesn't attempt.</div>
+</div>
+
+<h2 data-num="09">What's Next</h2>
+<p>Every module so far has protected the HTML the BROWSER renders.
+Module 29 moves one layer down, to the HTTP responses a SERVER sends in
+the first place — preventing untrusted data from injecting fake
+response headers before any HTML is even in the picture.</p>
+
+<div class="module-nav">
+  <a href="../27_entity_encoding/tutorial.html"><span class="dir">← Previous</span>Module 27: HTML Entity Encoding</a>
+  <a class="next" href="../29_header_injection/tutorial.html"><span class="dir">Next →</span>Module 29: HTTP Header Injection Prevention</a>
+</div>
+
+</body>
+</html>
