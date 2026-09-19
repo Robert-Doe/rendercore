@@ -11,6 +11,10 @@ venv/
 node_modules/
 npm-debug.log*
 
+# webapp build output
+webapp/node_modules/
+webapp/dist/
+
 # Editors / tooling
 .idea/
 .vscode/
