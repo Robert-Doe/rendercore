@@ -84,10 +84,10 @@ function renderApp() {
 
     <div class="hero">
       <h1>Rendering Pipeline Visualizer</h1>
-      <p>A browser engine, one module at a time. This page runs a real, faithful
+      <p>A browser engine, one module at a time. This page runs a faithful
       TypeScript port of the course's HTML tokenizer, DOM tree builder, CSS parser,
-      selector matcher, cascade, and block layout algorithms — the same logic,
-      not a stand-in — on whatever HTML and CSS you type below.</p>
+      selector matcher, cascade, and block layout algorithms on whatever HTML and
+      CSS you type below.</p>
       <div class="modules">
         <span class="pill">05_html_tokenizer</span>
         <span class="pill">06_dom_tree_builder</span>
