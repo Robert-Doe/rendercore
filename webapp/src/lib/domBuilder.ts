@@ -80,7 +80,7 @@ export function buildTree(tokens: Token[]): ElementNode {
       if (matchIdx !== -1) {
         stack.length = matchIdx; // closes the match AND any unclosed tags above it
       }
-      // else: a stray end tag with no open match — ignored, per spec
+      // else: a stray end tag with no open match, ignored, per spec
     } else if (tok.kind === 'Text') {
       top.children.push({ kind: 'Text', data: tok.data, parent: top });
     } else if (tok.kind === 'Comment') {

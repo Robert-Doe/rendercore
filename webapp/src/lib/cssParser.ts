@@ -2,7 +2,7 @@
 //
 // Turns a stylesheet string into a structured list of Rule objects, each
 // with a parsed selector list and a parsed declaration list. Deliberately
-// does not compute specificity or resolve conflicts — that's the
+// does not compute specificity or resolve conflicts, that's the
 // cascade's job (cascade.ts / Module 9).
 
 const WHITESPACE = ' \t\n\r\f';

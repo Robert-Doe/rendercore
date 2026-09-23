@@ -1,6 +1,6 @@
 // Ported from ../../../11_block_inline_layout/block_layout.py
 //
-// Assigns real x/y/width/height coordinates to a tree of boxes —
+// Assigns real x/y/width/height coordinates to a tree of boxes,
 // recursively, parent before child for POSITION, children before parent
 // for an auto-height parent's SIZE, both in the same recursive call.
 //
@@ -44,7 +44,7 @@ function resolveSize(
   boxSizing: string,
 ): number | null {
   if (spec === 'auto') {
-    if (available === null) return null; // "compute from children" — height only
+    if (available === null) return null; // "compute from children", height only
     return Math.max(0.0, available - pad - bor);
   }
   if (boxSizing === 'border-box') return Math.max(0.0, spec - pad - bor);

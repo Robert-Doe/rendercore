@@ -1,7 +1,7 @@
 // Ported from ../../../08_selector_matching/selector_matching.py
 //
 // Given a DOM node and a parsed rule list, determines exactly which
-// rules' selectors match that node — walking ancestors for descendant
+// rules' selectors match that node, walking ancestors for descendant
 // combinators, and correctly not matching descendants of an element
 // against a selector that targets the element itself.
 

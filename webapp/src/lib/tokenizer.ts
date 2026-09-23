@@ -1,7 +1,7 @@
 // Ported from ../../../05_html_tokenizer/html_tokenizer.py
 //
 // A hand-rolled state machine that turns raw HTML into a stream of typed
-// tokens (start tag, end tag, text, comment) — including the two cases a
+// tokens (start tag, end tag, text, comment), including the two cases a
 // naive "split on < and >" approach breaks on: comments containing fake
 // tags, and <script>/<style> content that must not be tokenized as markup
 // even though it's full of < and > characters.

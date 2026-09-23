@@ -1,7 +1,7 @@
 // Ported from ../../../09_cascade/cascade.py
 //
 // Given several matching, conflicting rules for the same element and
-// property, picks exactly one final value — deterministically — using
+// property, picks exactly one final value (deterministically) using
 // specificity, source order, and !important, in the correct precedence
 // order. Also implements inheritance and fallback to an initial value.
 
